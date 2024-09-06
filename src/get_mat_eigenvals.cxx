@@ -1,12 +1,20 @@
-#include "hdf5.h"
+#include "hello_hdf5.h"
 #include "matexpre.h"
 #include "petscdm.h"
 #include "petscsys.h"
 #include "slepceps.h"
-#include <complex>
+#include <H5Fpublic.h>
+#include <H5Gpublic.h>
+#include <H5Ipublic.h>
+#include <H5Tpublic.h>
+#include <cstddef>
 #include <petsc.h>
 #include <slepc.h>
+#include <string>
 #include <vector>
+
+const std::string HDF5_DB("data.hdf5");
+const std::string ROOT_GROUP("eigenvalues");
 
 int main(int argc, char **argv) {
 
@@ -18,11 +26,11 @@ int main(int argc, char **argv) {
                                     60.0, 70.0, 80.0, 90.0, 100.0};
   PetscInt pts_per_wavelen = 10;
 
-  // Create hdf5 database.
-  hid_t file_id =
-      H5Fcreate("results.h5", H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
-  hid_t group_id = H5Gcreate(file_id, std::to_string(omega).c_str(),
-                             H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+  // Create or open hdf5 database.
+  hid_t file_id = get_file(HDF5_DB);
+
+  // Create or open root group.
+  hid_t group_id = get_group(file_id, ROOT_GROUP);
 
   for (auto omega : omega_list) {
     PetscReal interior_domain_lens[2] = {1.0, 1.0};
@@ -36,8 +44,8 @@ int main(int argc, char **argv) {
     PetscInt absorber_elems[2] = {
         static_cast<PetscInt>(absorber_ratio * interior_elems[0]) + 1,
         static_cast<PetscInt>(absorber_ratio * interior_elems[1]) + 1};
-    MatExpre<2u> matexpre(interior_domain_lens, interior_elems, absorber_elems,
-                          omega, 25.0);
+    MatExpre<2> matexpre(interior_domain_lens, interior_elems, absorber_elems,
+                         omega, 25.0);
     PetscCall(matexpre.print_info());
 
     // Create velocity vector and matrix.
@@ -63,7 +71,7 @@ int main(int argc, char **argv) {
     PetscPrintf(PETSC_COMM_WORLD, "Number of converged eigenpairs: %d\n",
                 nconv);
 
-    std::vector<std::complex<PetscScalar>> eigvals(nconv);
+    std::vector<PetscScalar> eigvals(nconv);
 
     for (PetscInt i = 0; i < nconv; ++i) {
       PetscScalar kr = 0.0 + 0.0i;
@@ -85,10 +93,36 @@ int main(int argc, char **argv) {
     PetscCall(MatDestroy(&A));
 
     // Write eigenvalues to hdf5 database.
+    size_t len = eigvals.size();
+    auto datasp_id = H5Screate_simple(1, &len, nullptr);
+
+    auto complex_id = get_complex_dtype();
+
+    auto dataset_name = "omega" + std::to_string(static_cast<int>(omega));
+    // Create or open dataset.
+    auto dataset_id =
+        get_dataset(group_id, dataset_name, complex_id, datasp_id);
+
+    add_attribute(group_id, dataset_name, "shape", "2d sq");
+    add_attribute(group_id, dataset_name, "pts per", pts_per_wavelen);
+    add_attribute(group_id, dataset_name, "abs rho", absorber_ratio);
+    add_attribute(group_id, dataset_name, "omega", omega);
+    add_attribute(group_id, dataset_name, "int dom len",
+                  interior_domain_lens[0]);
+    add_attribute(group_id, dataset_name, "int dom elm", interior_elems[0]);
+    add_attribute(group_id, dataset_name, "abs elm", absorber_elems[0]);
+    add_attribute(group_id, dataset_name, "v max", v_max);
+
+    H5Dwrite(dataset_id, complex_id, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+             eigvals.data());
+
+    H5Tclose(complex_id);
+    H5Sclose(datasp_id);
   }
 
   // Close hdf5 database.
-  auto status = H5Fclose(file_id);
+  H5Gclose(group_id);
+  H5Fclose(file_id);
 
   PetscCall(SlepcFinalize());
   return 0;

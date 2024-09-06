@@ -1,133 +1,117 @@
-/************************************************************
+#include "hello_hdf5.h"
+#include <H5Apublic.h>
+#include <H5Gpublic.h>
+#include <H5Ipublic.h>
+#include <filesystem>
 
-  This example shows how to read and write data to a compact
-  dataset.  The program first writes integers to a compact
-  dataset with dataspace dimensions of DIM0xDIM1, then
-  closes the file.  Next, it reopens the file, reads back
-  the data, and outputs it to the screen.
+void add_attribute(hid_t &loc, const std::string &name, const std::string &key,
+                   const std::string &value) {
+  auto scalar = H5Screate(H5S_SCALAR);
 
-  This file is intended for use with HDF5 Library version 1.8
+  auto strtype = H5Tcopy(H5T_C_S1);
+  H5Tset_size(strtype, value.size());
+  H5Tset_strpad(strtype, H5T_STR_NULLTERM);
 
- ************************************************************/
-
-#include "hdf5.h"
-#include <stdio.h>
-#include <stdlib.h>
-
-#define FILE "h5ex_d_compact.h5"
-#define DATASET "DS1"
-#define DIM0 4
-#define DIM1 7
-
-int main(void) {
-  hid_t file, space, dset, dcpl; /* Handles */
-  herr_t status;
-  H5D_layout_t layout;
-  hsize_t dims[2] = {DIM0, DIM1};
-  int wdata[DIM0][DIM1], /* Write buffer */
-      rdata[DIM0][DIM1], /* Read buffer */
-      i, j;
-
-  /*
-   * Initialize data.
-   */
-  for (i = 0; i < DIM0; i++)
-    for (j = 0; j < DIM1; j++)
-      wdata[i][j] = i * j - j;
-
-  /*
-   * Create a new file using the default properties.
-   */
-  file = H5Fcreate(FILE, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
-
-  /*
-   * Create dataspace.  Setting maximum size to NULL sets the maximum
-   * size to be the current size.
-   */
-  space = H5Screate_simple(2, dims, NULL);
-
-  /*
-   * Create the dataset creation property list, set the layout to
-   * compact.
-   */
-  dcpl = H5Pcreate(H5P_DATASET_CREATE);
-  status = H5Pset_layout(dcpl, H5D_COMPACT);
-
-  /*
-   * Create the dataset.  We will use all default properties for this
-   * example.
-   */
-  dset = H5Dcreate(file, DATASET, H5T_STD_I32LE, space, H5P_DEFAULT, dcpl,
-                   H5P_DEFAULT);
-
-  /*
-   * Write the data to the dataset.
-   */
-  status =
-      H5Dwrite(dset, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, wdata[0]);
-
-  /*
-   * Close and release resources.
-   */
-  status = H5Pclose(dcpl);
-  status = H5Dclose(dset);
-  status = H5Sclose(space);
-  status = H5Fclose(file);
-
-  /*
-   * Now we begin the read section of this example.
-   */
-
-  /*
-   * Open file and dataset using the default properties.
-   */
-  file = H5Fopen(FILE, H5F_ACC_RDONLY, H5P_DEFAULT);
-  dset = H5Dopen(file, DATASET, H5P_DEFAULT);
-
-  /*
-   * Retrieve the dataset creation property list, and print the
-   * storage layout.
-   */
-  dcpl = H5Dget_create_plist(dset);
-  layout = H5Pget_layout(dcpl);
-  printf("Storage layout for %s is: ", DATASET);
-  switch (layout) {
-  case H5D_COMPACT:
-    printf("H5D_COMPACT\n");
-    break;
-  case H5D_CONTIGUOUS:
-    printf("H5D_CONTIGUOUS\n");
-    break;
-  case H5D_CHUNKED:
-    printf("H5D_CHUNKED\n");
-  default:
-    printf("Unknown data storage layout\n");
-    break;
+  // Delete the attribute if it has been created.
+  hid_t attr = -1;
+  auto attr_exist_res =
+      H5Aexists_by_name(loc, name.c_str(), key.c_str(), H5P_DEFAULT);
+  if (attr_exist_res > 0) {
+    H5Adelete_by_name(loc, name.c_str(), key.c_str(), H5P_DEFAULT);
   }
+  attr = H5Acreate_by_name(loc, (name.size() >= 1) ? name.c_str() : ".",
+                           key.c_str(), strtype, scalar, H5P_DEFAULT,
+                           H5P_DEFAULT, H5P_DEFAULT);
 
-  /*
-   * Read the data using the default properties.
-   */
-  status =
-      H5Dread(dset, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, rdata[0]);
+  H5Awrite(attr, strtype, value.c_str());
+  H5Aclose(attr);
 
-  /*
-   * Output the data to the screen.
-   */
-  printf("%s:\n", DATASET);
-  for (i = 0; i < DIM0; i++) {
-    printf(" [");
-    for (j = 0; j < DIM1; j++)
-      printf(" %3d", rdata[i][j]);
-    printf("]\n");
+  H5Tclose(strtype);
+  H5Sclose(scalar);
+}
+
+void add_attribute(hid_t &loc, const std::string &name, const std::string &key,
+                   const double value) {
+  auto scalar = H5Screate(H5S_SCALAR);
+
+  // Create or open an attribute.
+  hid_t attr = -1;
+  auto attr_exist_res =
+      H5Aexists_by_name(loc, name.c_str(), key.c_str(), H5P_DEFAULT);
+  if (attr_exist_res > 0) {
+    H5Adelete_by_name(loc, name.c_str(), key.c_str(), H5P_DEFAULT);
   }
+  attr = H5Acreate_by_name(loc, name.c_str(), key.c_str(), H5T_NATIVE_DOUBLE,
+                           scalar, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
-  /*
-   * Close and release resources.
-   */
-  status = H5Pclose(dcpl);
-  status = H5Dclose(dset);
-  status = H5Fclose(file);
+  H5Awrite(attr, H5T_NATIVE_DOUBLE, &value);
+  H5Aclose(attr);
 
-  return 0;
+  H5Sclose(scalar);
+}
+
+void add_attribute(hid_t &loc, const std::string &name, const std::string &key,
+                   const int value) {
+  auto scalar = H5Screate(H5S_SCALAR);
+
+  // Create or open an attribute.
+  hid_t attr = -1;
+  auto attr_exist_res =
+      H5Aexists_by_name(loc, name.c_str(), key.c_str(), H5P_DEFAULT);
+  if (attr_exist_res > 0) {
+    H5Adelete_by_name(loc, name.c_str(), key.c_str(), H5P_DEFAULT);
+  }
+  attr = H5Acreate_by_name(loc, name.c_str(), key.c_str(), H5T_NATIVE_INT,
+                           scalar, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+  H5Awrite(attr, H5T_NATIVE_INT, &value);
+  H5Aclose(attr);
+
+  H5Sclose(scalar);
+}
+
+bool check_path_exists(hid_t id, const std::string &path) {
+  return H5Lexists(id, path.c_str(), H5P_DEFAULT) > 0;
+}
+
+hid_t get_file(const std::string &filename) {
+  hid_t file_id = -1;
+  if (!std::filesystem::exists(filename)) {
+    file_id =
+        H5Fcreate(filename.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+  } else {
+    file_id = H5Fopen(filename.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+  }
+  return file_id;
+}
+
+hid_t get_group(hid_t loc, const std::string &name) {
+  hid_t group_id = -1;
+  if (!check_path_exists(loc, name)) {
+    group_id =
+        H5Gcreate(loc, name.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+  } else {
+    group_id = H5Gopen(loc, name.c_str(), H5P_DEFAULT);
+  }
+  return group_id;
+}
+
+hid_t get_complex_dtype() {
+  hid_t complex_id = H5Tcreate(H5T_COMPOUND, sizeof(hdf5_complex_t));
+  H5Tinsert(complex_id, "real", HOFFSET(hdf5_complex_t, re), H5T_NATIVE_DOUBLE);
+  H5Tinsert(complex_id, "imaginary", HOFFSET(hdf5_complex_t, im),
+            H5T_NATIVE_DOUBLE);
+  return complex_id;
+}
+
+hid_t get_dataset(hid_t group_id, const std::string &dataset_name,
+                  hid_t datatype_id, hid_t dataspace_id) {
+  hid_t dataset_id = -1;
+  if (!check_path_exists(group_id, dataset_name)) {
+    dataset_id = H5Dcreate(group_id, dataset_name.c_str(), datatype_id,
+                           dataspace_id, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+  } else {
+    dataset_id = H5Dopen(group_id, dataset_name.c_str(), H5P_DEFAULT);
+  }
+  return dataset_id;
 }
