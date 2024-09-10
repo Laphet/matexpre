@@ -1,11 +1,13 @@
 #pragma once
 #include "petscdm.h"
 #include "petscmat.h"
+#include "petscsftypes.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <fftw3-mpi.h>
 
 constexpr size_t MAX_DIM = 3;
 constexpr size_t MAX_STENCIL_2D = 5;
@@ -32,27 +34,49 @@ private:
   // The Petsc vector of W(r)
   Vec W;
 
+  // FFTW context, just do not trust the PETSC FFTW interface.
+  fftw_plan forward_plan, backword_plan;
+  fftw_complex *fftw_data;
+  // Use FFTW3 transpose functionality to improve the performance.
+  ptrdiff_t alloc_local, local_n0, local_0_start, local_n1, local_1_start;
+
+  // Wrap FFTW vector into PETSc vector for data transfer.
+  // This is a seq vector.
+  Vec fftw_vec_forward_input;
+  VecScatter scatter;
+
   PetscErrorCode _setup();
 
+  PetscErrorCode _DMDA_vec_to_FFTW_vec(Vec dmda_vec);
+
+  PetscErrorCode _FFTW_vec_to_DMDA_vec(Vec dmda_vec);
+
+  void _apply_exp_laplace_freq(PetscScalar coeff);
+
 public:
-  // To represent the computational domain, excluding periodic boundary
-  // relations.
   DM dm;
+  // The Petsc vector of the velocity field, initialized by the user.
+  // Users should set the velocity field before calling the apply method.
+  // Users should destroy the vector.
+  Vec velocity;
   // Frequency.
   PetscReal omega;
   // Absorbing constant.
   PetscReal eta;
+  // The exp integration time length.
+  PetscReal tau;
 
   MatExpre();
 
   MatExpre(const PetscReal _interior_domain_lens[DIM],
            const PetscInt _interior_elems[DIM],
-           const PetscInt _absorber_elems[DIM], PetscReal _omega = 10.0,
-           PetscReal _eta = 25.0);
+           const PetscInt _absorber_elems[DIM]);
 
-  PetscErrorCode get_mat(Vec velocity, Mat A);
+  PetscErrorCode get_mat(Mat A);
 
   PetscErrorCode print_info();
+
+  PetscErrorCode pc_apply(Vec x, Vec y);
 
   ~MatExpre();
 };

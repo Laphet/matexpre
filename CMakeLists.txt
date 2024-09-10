@@ -97,6 +97,13 @@ find_package(GSL REQUIRED)
 
 find_package(HDF5 REQUIRED COMPONENTS C)
 
+# Some errors with FFTW3 CMakeLists.txt
+# find_package(FFTW3 REQUIRED)
+
+# Find FFTW3 with pkg-config
+set(ENV{PKG_CONFIG_PATH} $ENV{FFTW3_DIR}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH})
+pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
+
 #  tells CMake to build the application ex1 from the source file ex1.c
 #  this must appear AFTER the compilers are set
 project(matexpre CXX)

@@ -46,7 +46,6 @@ int main(int argc, char **argv) {
         static_cast<PetscInt>(absorber_ratio * interior_elems[1]) + 1};
     MatExpre<2> matexpre(interior_domain_lens, interior_elems, absorber_elems,
                          omega, 25.0);
-    PetscCall(matexpre.print_info());
 
     // Create velocity vector and matrix.
     Vec velocity = nullptr;
