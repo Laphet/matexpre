@@ -1,7 +1,5 @@
 #pragma once
 #include "petscdm.h"
-#include "petscmat.h"
-#include "petscsftypes.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
 #include <cmath>
@@ -12,9 +10,27 @@
 constexpr size_t MAX_DIM = 3;
 constexpr size_t MAX_STENCIL_2D = 5;
 constexpr size_t MAX_STENCIL_3D = 7;
+
 const PetscReal MAGIC_CONSTANT1_W = 2.5;
 const PetscReal MAGIC_CONSTANT2_W = 1.0 / std::sqrt(2.0);
 const std::complex<double> IU = std::complex<double>(0.0, 1.0);
+
+const PetscReal DEFAULT_INTERIOR_DOMAIN_LEN = 1.0;
+const PetscInt DEFAULT_INTERIOR_ELEM = 16;
+const PetscInt DEFAULT_ABSORBER_ELEM = 4;
+const PetscReal DEFAULT_OMEGA = 8.0;
+const PetscReal DEFAULT_ETA = 25.0;
+const PetscReal DEFAULT_TAU = 1.0;
+
+const PetscReal GL_QUAD_POS_3[3] = {-1.0, 0.0, 1.0};
+const PetscReal GL_QUAD_WGH_3[3] = {1.0 / 3.0, 4.0 / 3.0, 1.0 / 3.0};
+const PetscReal GL_QUAD_POS_4[4] = {-1.0, -1.0 / std::sqrt(5.0),
+                                    1.0 / std::sqrt(5.0), 1.0};
+const PetscReal GL_QUAD_WGH_4[4] = {1.0 / 6.0, 5.0 / 6.0, 5.0 / 6.0, 1.0 / 6.0};
+const PetscReal GL_QUAD_POS_5[5] = {-1.0, -std::sqrt(3.0 / 7.0), 0.0,
+                                    std::sqrt(3.0 / 7.0), 1.0};
+const PetscReal GL_QUAD_WGH_5[5] = {1.0 / 10.0, 49.0 / 90.0, 32.0 / 45.0,
+                                    49.0 / 90.0, 1.0 / 10.0};
 
 template <unsigned int DIM> class MatExpre {
 private:
@@ -35,15 +51,15 @@ private:
   Vec W;
 
   // FFTW context, just do not trust the PETSC FFTW interface.
-  fftw_plan forward_plan, backword_plan;
+  fftw_plan forward_plan, backward_plan;
+  // The FFTW3 data array, the size is determined by FFTW, which may contain
+  // more space than the local data.
   fftw_complex *fftw_data;
   // Use FFTW3 transpose functionality to improve the performance.
   ptrdiff_t alloc_local, local_n0, local_0_start, local_n1, local_1_start;
 
-  // Wrap FFTW vector into PETSc vector for data transfer.
-  // This is a seq vector.
+  // The domain partition is determined by FFTW.
   Vec fftw_vec_forward_input;
-  VecScatter scatter;
 
   PetscErrorCode _setup();
 
@@ -52,6 +68,10 @@ private:
   PetscErrorCode _FFTW_vec_to_DMDA_vec(Vec dmda_vec);
 
   void _apply_exp_laplace_freq(PetscScalar coeff);
+
+  PetscErrorCode _apply_exp_diag(PetscScalar coeff);
+
+  PetscErrorCode _apply_exp_A(PetscReal s);
 
 public:
   DM dm;

@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <fftw3-mpi.h>
 #include <gsl/gsl_pow_int.h>
+#include <vector>
 
 template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::_setup() {
   // Borrowed, do not destroy.
@@ -24,7 +25,7 @@ template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::_setup() {
   void *acoords = nullptr, *aWxyz[DIM] = {nullptr};
   // Use std::vector to store the global vectors.
   Vec Wxyz[DIM] = {nullptr};
-  IS fftw_patch_is;
+  PetscInt mpi_size = -1, mpi_rank = -1;
 
   PetscFunctionBeginUser;
   // Process other parameters.
@@ -34,12 +35,62 @@ template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::_setup() {
     absorber_lens[i] = h[i] * absorber_elems[i];
   }
 
+  // FFTW3 context.
+  fftw_mpi_init();
+  // We want to follow PETSc's convention, and hence x is the fastest index.
+  // Therefore, for FFTW3, we need to transpose the data.
+  if constexpr (DIM == 2)
+    alloc_local = fftw_mpi_local_size_2d_transposed(
+        total_elems[1], total_elems[0], PETSC_COMM_WORLD, &local_n0,
+        &local_0_start, &local_n1, &local_1_start);
+  if constexpr (DIM == 3)
+    alloc_local = fftw_mpi_local_size_3d_transposed(
+        total_elems[2], total_elems[1], total_elems[0], PETSC_COMM_WORLD,
+        &local_n0, &local_0_start, &local_n1, &local_1_start);
+  fftw_data = fftw_alloc_complex(alloc_local);
+  PetscAssert(fftw_data != nullptr, PETSC_COMM_WORLD,
+              "Fail to allocate memory for fftw_data");
+  if constexpr (DIM == 2) {
+    forward_plan = fftw_mpi_plan_dft_2d(total_elems[1], total_elems[0],
+                                        fftw_data, fftw_data, PETSC_COMM_WORLD,
+                                        FFTW_FORWARD, FFTW_MPI_TRANSPOSED_OUT);
+    backward_plan = fftw_mpi_plan_dft_2d(total_elems[1], total_elems[0],
+                                         fftw_data, fftw_data, PETSC_COMM_WORLD,
+                                         FFTW_BACKWARD, FFTW_MPI_TRANSPOSED_IN);
+  }
+  if constexpr (DIM == 3) {
+    forward_plan = fftw_mpi_plan_dft_3d(
+        total_elems[2], total_elems[1], total_elems[0], fftw_data, fftw_data,
+        PETSC_COMM_WORLD, FFTW_FORWARD, FFTW_MPI_TRANSPOSED_OUT);
+    backward_plan = fftw_mpi_plan_dft_3d(
+        total_elems[2], total_elems[1], total_elems[0], fftw_data, fftw_data,
+        PETSC_COMM_WORLD, FFTW_BACKWARD, FFTW_MPI_TRANSPOSED_IN);
+  }
+
+  // Warp the fftw_data into a PETSc vector.
+  PetscInt loc_vec_len = -1;
+  if constexpr (DIM == 2) {
+    loc_vec_len = local_n0 * total_elems[0];
+  }
+  if constexpr (DIM == 3) {
+    loc_vec_len = local_n0 * total_elems[0] * total_elems[1];
+  }
+  PetscCall(VecCreateMPIWithArray(
+      PETSC_COMM_WORLD, 1, loc_vec_len, PETSC_DETERMINE,
+      reinterpret_cast<PetscScalar *>(fftw_data), &fftw_vec_forward_input));
+
+  PetscCall(MPI_Comm_size(PETSC_COMM_WORLD, &mpi_size));
+  PetscCall(MPI_Comm_rank(PETSC_COMM_WORLD, &mpi_rank));
+  std::vector<PetscInt> local_n0s(mpi_size, 0);
+  PetscCall(MPI_Allgather(&local_n0, 1, MPIU_INT, local_n0s.data(), 1, MPIU_INT,
+                          PETSC_COMM_WORLD));
+
   // Create the DMDA for the physical domain, use c++17 if constexpr.
   if constexpr (DIM == 2) {
     PetscCall(DMDACreate2d(PETSC_COMM_WORLD, DM_BOUNDARY_PERIODIC,
                            DM_BOUNDARY_PERIODIC, DMDA_STENCIL_STAR,
-                           total_elems[0], total_elems[1], PETSC_DECIDE,
-                           PETSC_DECIDE, 1, 1, nullptr, nullptr, &dm));
+                           total_elems[0], total_elems[1], 1, mpi_size, 1, 1,
+                           &total_elems[0], local_n0s.data(), &dm));
 
     PetscCall(DMSetUp(dm));
     // Set the coordinates of the DMDA.
@@ -50,11 +101,11 @@ template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::_setup() {
   }
 
   if constexpr (DIM == 3) {
-    PetscCall(DMDACreate3d(PETSC_COMM_WORLD, DM_BOUNDARY_PERIODIC,
-                           DM_BOUNDARY_PERIODIC, DM_BOUNDARY_PERIODIC,
-                           DMDA_STENCIL_STAR, total_elems[0], total_elems[1],
-                           total_elems[2], PETSC_DECIDE, PETSC_DECIDE,
-                           PETSC_DECIDE, 1, 1, nullptr, nullptr, nullptr, &dm));
+    PetscCall(DMDACreate3d(
+        PETSC_COMM_WORLD, DM_BOUNDARY_PERIODIC, DM_BOUNDARY_PERIODIC,
+        DM_BOUNDARY_PERIODIC, DMDA_STENCIL_STAR, total_elems[0], total_elems[1],
+        total_elems[2], 1, 1, mpi_size, 1, 1, &total_elems[0], &total_elems[1],
+        local_n0s.data(), &dm));
     PetscCall(DMSetUp(dm));
 
     // Set the coordinates of the DMDA.
@@ -202,72 +253,11 @@ template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::_setup() {
     PetscCall(DMRestoreGlobalVector(dm, &Wxyz[i]));
   }
 
-  // FFTW3 context.
-  fftw_mpi_init();
-  // We want to follow PETSc's convention, and hence x is the fastest index.
-  // Therefore, for FFTW3, we need to transpose the data.
-  if constexpr (DIM == 2)
-    alloc_local = fftw_mpi_local_size_2d_transposed(
-        total_elems[1], total_elems[0], PETSC_COMM_WORLD, &local_n0,
-        &local_0_start, &local_n1, &local_1_start);
-  if constexpr (DIM == 3)
-    alloc_local = fftw_mpi_local_size_3d_transposed(
-        total_elems[2], total_elems[1], total_elems[0], PETSC_COMM_WORLD,
-        &local_n0, &local_0_start, &local_n1, &local_1_start);
-  fftw_data = fftw_alloc_complex(alloc_local);
-  PetscAssert(fftw_data != nullptr, PETSC_COMM_WORLD,
-              "Fail to allocate memory for fftw_data");
-  if constexpr (DIM == 2) {
-    forward_plan = fftw_mpi_plan_dft_2d(total_elems[1], total_elems[0],
-                                        fftw_data, fftw_data, PETSC_COMM_WORLD,
-                                        FFTW_FORWARD, FFTW_MPI_TRANSPOSED_OUT);
-    backword_plan = fftw_mpi_plan_dft_2d(total_elems[1], total_elems[0],
-                                         fftw_data, fftw_data, PETSC_COMM_WORLD,
-                                         FFTW_BACKWARD, FFTW_MPI_TRANSPOSED_IN);
-  }
-  if constexpr (DIM == 3) {
-    forward_plan = fftw_mpi_plan_dft_3d(
-        total_elems[2], total_elems[1], total_elems[0], fftw_data, fftw_data,
-        PETSC_COMM_WORLD, FFTW_FORWARD, FFTW_MPI_TRANSPOSED_OUT);
-    backword_plan = fftw_mpi_plan_dft_3d(
-        total_elems[2], total_elems[1], total_elems[0], fftw_data, fftw_data,
-        PETSC_COMM_WORLD, FFTW_BACKWARD, FFTW_MPI_TRANSPOSED_IN);
-  }
-
-  // Warp the fftw_data into PETSc vector.
-  PetscInt loc_vec_len = -1;
-  if constexpr (DIM == 2) {
-    loc_vec_len = local_n0 * total_elems[0];
-  }
-  if constexpr (DIM == 3) {
-    loc_vec_len = local_n0 * total_elems[0] * total_elems[1];
-  }
-
-  PetscCall(VecCreateSeqWithArray(PETSC_COMM_SELF, 1, loc_vec_len,
-                                  reinterpret_cast<PetscScalar *>(fftw_data),
-                                  &fftw_vec_forward_input));
-
-  MatStencil lower = {0, 0, 0, 0}, upper = {0, 0, total_elems[0], 0};
-  if constexpr (DIM == 2) {
-    lower.j = static_cast<PetscInt>(local_0_start);
-    upper.j = static_cast<PetscInt>(local_0_start + local_n0);
-  }
-  if constexpr (DIM == 3) {
-    lower.j = 0;
-    upper.j = total_elems[1];
-    lower.k = static_cast<PetscInt>(local_0_start);
-    upper.k = static_cast<PetscInt>(local_0_start + local_n0);
-  }
-  PetscCall(DMDACreatePatchIS(dm, &lower, &upper, &fftw_patch_is, PETSC_TRUE));
-  PetscCall(VecScatterCreate(W, fftw_patch_is, fftw_vec_forward_input, nullptr,
-                             &scatter));
-  PetscCall(ISDestroy(&fftw_patch_is));
-
   // Set other default values for public members.
   velocity = nullptr;
-  omega = 10.0;
-  eta = 25.0;
-  tau = 1.0;
+  omega = DEFAULT_OMEGA;
+  eta = DEFAULT_ETA;
+  tau = DEFAULT_TAU;
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -275,13 +265,10 @@ template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::_setup() {
 template <unsigned int DIM> MatExpre<DIM>::MatExpre() {
   // Initialize the default domain size.
   for (unsigned int i = 0; i < DIM; ++i) {
-    interior_domain_lens[i] = 0.5;
-    interior_elems[i] = 16;
-    total_elems[i] = 32;
+    interior_domain_lens[i] = DEFAULT_INTERIOR_DOMAIN_LEN;
+    interior_elems[i] = DEFAULT_INTERIOR_ELEM;
+    absorber_elems[i] = DEFAULT_ABSORBER_ELEM;
   }
-  // Initialize the default frequency.
-  omega = 10.0;
-  eta = 25.0;
 
   PetscFunctionBeginUser;
 
@@ -292,11 +279,12 @@ template <unsigned int DIM> MatExpre<DIM>::MatExpre() {
                                         &interior_elems[0], nullptr, nullptr));
   PetscCallVoid(PetscOptionsGetIntArray(nullptr, nullptr, "-absorber-elems",
                                         &absorber_elems[0], nullptr, nullptr));
+
+  PetscCallVoid(_setup());
+
   PetscCallVoid(
       PetscOptionsGetReal(nullptr, nullptr, "-omega", &omega, nullptr));
   PetscCallVoid(PetscOptionsGetReal(nullptr, nullptr, "-eta", &eta, nullptr));
-
-  PetscCallVoid(_setup());
 
   PetscFunctionReturnVoid();
 }
@@ -440,6 +428,7 @@ template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::print_info() {
 
   PetscPrintf(PETSC_COMM_WORLD, "Frequency: omega=%.5f\n", omega);
   PetscPrintf(PETSC_COMM_WORLD, "Absorbing constant: eta=%.5f\n", eta);
+  PetscPrintf(PETSC_COMM_WORLD, "Relaxation time: tau=%.5f\n", tau);
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -452,9 +441,8 @@ template <unsigned int DIM> MatExpre<DIM>::~MatExpre() {
 
   // Clean FFTW3 context.
   PetscCallVoid(VecDestroy(&fftw_vec_forward_input));
-  PetscCallVoid(VecScatterDestroy(&scatter));
   fftw_destroy_plan(forward_plan);
-  fftw_destroy_plan(backword_plan);
+  fftw_destroy_plan(backward_plan);
   fftw_free(fftw_data);
   fftw_mpi_cleanup();
 
@@ -464,24 +452,14 @@ template <unsigned int DIM> MatExpre<DIM>::~MatExpre() {
 template <unsigned int DIM>
 PetscErrorCode MatExpre<DIM>::_DMDA_vec_to_FFTW_vec(Vec dmda_vec) {
   PetscFunctionBeginUser;
-
-  PetscCall(VecScatterBegin(scatter, dmda_vec, fftw_vec_forward_input,
-                            INSERT_VALUES, SCATTER_FORWARD));
-  PetscCall(VecScatterEnd(scatter, dmda_vec, fftw_vec_forward_input,
-                          INSERT_VALUES, SCATTER_FORWARD));
-
+  PetscCall(VecCopy(dmda_vec, fftw_vec_forward_input));
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 template <unsigned int DIM>
 PetscErrorCode MatExpre<DIM>::_FFTW_vec_to_DMDA_vec(Vec dmda_vec) {
   PetscFunctionBeginUser;
-
-  PetscCall(VecScatterBegin(scatter, fftw_vec_forward_input, dmda_vec,
-                            INSERT_VALUES, SCATTER_REVERSE));
-  PetscCall(VecScatterEnd(scatter, fftw_vec_forward_input, dmda_vec,
-                          INSERT_VALUES, SCATTER_REVERSE));
-
+  PetscCall(VecCopy(fftw_vec_forward_input, dmda_vec));
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
@@ -523,6 +501,78 @@ void MatExpre<DIM>::_apply_exp_laplace_freq(PetscScalar coeff) {
           *data_ptr *= std::exp(coeff * l);
         }
   }
+}
+
+template <unsigned int DIM>
+PetscErrorCode MatExpre<DIM>::_apply_exp_diag(PetscScalar coeff) {
+  // Work on the real space data, the data has the shape of [local_n0][dim-x] in
+  // 2D and [local_n0][dim-y][dim-x] in 3D.
+
+  void *avelocity = nullptr, *aW = nullptr;
+  PetscFunctionBeginUser;
+
+  PetscCall(DMDAVecGetArrayRead(dm, velocity, &avelocity));
+  PetscCall(DMDAVecGetArrayRead(dm, W, &aW));
+  if constexpr (DIM == 2) {
+    PetscScalar **avelocity_2d = reinterpret_cast<PetscScalar **>(avelocity),
+                **aW_2d = reinterpret_cast<PetscScalar **>(aW);
+    for (auto ey = local_0_start; ey < local_0_start + local_n0; ++ey)
+      for (auto ex = 0; ex < total_elems[0]; ++ex) {
+        PetscScalar d = -omega * omega / avelocity_2d[ey][ex].real() /
+                        avelocity_2d[ey][ex].real();
+        d -= eta * omega * aW_2d[ey][ex].real() * IU;
+        auto offset = (ey - local_0_start) * total_elems[0] + ex;
+        PetscScalar *data_ptr =
+            reinterpret_cast<PetscScalar *>(&fftw_data[offset]);
+        *data_ptr *= std::exp(coeff * d);
+      }
+  }
+
+  if constexpr (DIM == 3) {
+    PetscScalar ***avelocity_3d = reinterpret_cast<PetscScalar ***>(avelocity),
+                ***aW_3d = reinterpret_cast<PetscScalar ***>(aW);
+    for (auto ex = local_0_start; ex < local_0_start + local_n0; ++ex)
+      for (auto ey = 0; ey < total_elems[1]; ++ey)
+        for (auto ez = 0; ez < total_elems[2]; ++ez) {
+          PetscScalar d = -omega * omega / avelocity_3d[ez][ey][ex].real() /
+                          avelocity_3d[ez][ey][ex].real();
+          d -= eta * omega * aW_3d[ez][ey][ex].real() * IU;
+          auto offset = (ex - local_0_start) * total_elems[1] * total_elems[2] +
+                        ey * total_elems[2] + ez;
+          PetscScalar *data_ptr =
+              reinterpret_cast<PetscScalar *>(&fftw_data[offset]);
+          *data_ptr *= std::exp(coeff * d);
+        }
+  }
+
+  PetscCall(DMDAVecRestoreArrayRead(dm, velocity, &avelocity));
+  PetscCall(DMDAVecRestoreArrayRead(dm, W, &aW));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+template <unsigned int DIM>
+PetscErrorCode MatExpre<DIM>::_apply_exp_A(PetscReal s) {
+  PetscFunctionBeginUser;
+
+  // exp(i s/2 D)
+  PetscCall(_apply_exp_diag(s * 0.5 * IU));
+
+  // exp(i s L)
+  fftw_execute(forward_plan);
+  _apply_exp_laplace_freq(s * IU);
+  fftw_execute(backward_plan);
+  // FFTW computes an unnormalized transform.
+  if constexpr (DIM == 2) {
+    PetscCall(VecScale(fftw_vec_forward_input, h[0] * h[1]));
+  }
+  if constexpr (DIM == 3) {
+    PetscCall(VecScale(fftw_vec_forward_input, h[0] * h[1] * h[2]));
+  }
+
+  // exp(i s/2 D)
+  PetscCall(_apply_exp_diag(s * 0.5 * IU));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 // Template instance for 2D.

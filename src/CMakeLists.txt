@@ -1,4 +1,4 @@
-add_executable(main get_mat_eigenvals.cxx matexpre.cxx hello_hdf5.cxx)
+add_executable(main test_petsc_dmda.cxx)
 
 # Manually set the include and library directories
 target_include_directories(main PUBLIC ${SLEPC_INCLUDE_DIRS})
