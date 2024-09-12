@@ -1,11 +1,13 @@
 #pragma once
 #include "petscdm.h"
+#include "petscpctypes.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
 #include <cmath>
 #include <complex>
 #include <cstddef>
 #include <fftw3-mpi.h>
+#include <petscmat.h>
 
 constexpr size_t MAX_DIM = 3;
 constexpr size_t MAX_STENCIL_2D = 5;
@@ -21,6 +23,7 @@ const PetscInt DEFAULT_ABSORBER_ELEM = 4;
 const PetscReal DEFAULT_OMEGA = 8.0;
 const PetscReal DEFAULT_ETA = 25.0;
 const PetscReal DEFAULT_TAU = 1.0;
+const PetscInt DEFAULT_QUAD_POINTS = 3;
 
 const PetscReal GL_QUAD_POS_3[3] = {-1.0, 0.0, 1.0};
 const PetscReal GL_QUAD_WGH_3[3] = {1.0 / 3.0, 4.0 / 3.0, 1.0 / 3.0};
@@ -71,7 +74,7 @@ private:
 
   PetscErrorCode _apply_exp_diag(PetscScalar coeff);
 
-  PetscErrorCode _apply_exp_A(PetscReal s);
+  PetscErrorCode _apply_exp_A(PetscScalar coeff);
 
 public:
   DM dm;
@@ -85,6 +88,8 @@ public:
   PetscReal eta;
   // The exp integration time length.
   PetscReal tau;
+  // The number of quandrature points in [0, tau].
+  PetscInt num_quad_points;
 
   MatExpre();
 
@@ -96,7 +101,11 @@ public:
 
   PetscErrorCode print_info();
 
-  PetscErrorCode pc_apply(Vec x, Vec y);
+  PetscErrorCode pc_apply(Vec input, Vec output);
 
   ~MatExpre();
 };
+
+// Warp the pc_apply method into a C interface.
+extern "C" PetscErrorCode pc_apply_2d(PC pc, Vec input, Vec output);
+extern "C" PetscErrorCode pc_apply_3d(PC pc, Vec input, Vec output);

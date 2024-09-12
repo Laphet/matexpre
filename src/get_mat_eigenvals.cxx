@@ -44,18 +44,24 @@ int main(int argc, char **argv) {
     PetscInt absorber_elems[2] = {
         static_cast<PetscInt>(absorber_ratio * interior_elems[0]) + 1,
         static_cast<PetscInt>(absorber_ratio * interior_elems[1]) + 1};
-    MatExpre<2> matexpre(interior_domain_lens, interior_elems, absorber_elems,
-                         omega, 25.0);
+    MatExpre<2> matexpre(interior_domain_lens, interior_elems, absorber_elems);
 
-    // Create velocity vector and matrix.
+    // Create velocity vector.
     Vec velocity = nullptr;
+    // Create matrix.
+    Mat A = nullptr;
+    // Create eigensolver.
+    EPS eps = nullptr;
+    // Number of converged eigenvalues.
+    PetscInt nconv = 0;
+
     PetscCall(DMCreateGlobalVector(matexpre.dm, &velocity));
     PetscCall(VecSet(velocity, v_max));
-    Mat A = nullptr;
-    PetscCall(DMCreateMatrix(matexpre.dm, &A));
-    PetscCall(matexpre.get_mat(velocity, A));
+    matexpre.velocity = velocity;
 
-    EPS eps = nullptr;
+    PetscCall(DMCreateMatrix(matexpre.dm, &A));
+    PetscCall(matexpre.get_mat(A));
+
     PetscCall(EPSCreate(PETSC_COMM_WORLD, &eps));
     PetscCall(EPSSetOperators(eps, A, nullptr));
     PetscCall(EPSSetProblemType(eps, EPS_NHEP));
@@ -65,7 +71,6 @@ int main(int argc, char **argv) {
 
     PetscCall(EPSSolve(eps));
 
-    PetscInt nconv = 0;
     PetscCall(EPSGetConverged(eps, &nconv));
     PetscPrintf(PETSC_COMM_WORLD, "Number of converged eigenpairs: %d\n",
                 nconv);
@@ -85,38 +90,38 @@ int main(int argc, char **argv) {
       eigvals[i] = kr;
     }
 
+    // Destroy objects.
     PetscCall(EPSDestroy(&eps));
-
-    // Distroy velocity vector and matrix.
     PetscCall(VecDestroy(&velocity));
     PetscCall(MatDestroy(&A));
+    {
+      // Write eigenvalues to hdf5 database.
+      size_t len = eigvals.size();
+      auto datasp_id = H5Screate_simple(1, &len, nullptr);
 
-    // Write eigenvalues to hdf5 database.
-    size_t len = eigvals.size();
-    auto datasp_id = H5Screate_simple(1, &len, nullptr);
+      auto complex_id = get_complex_dtype();
 
-    auto complex_id = get_complex_dtype();
+      auto dataset_name = "omega" + std::to_string(static_cast<int>(omega));
+      // Create or open dataset.
+      auto dataset_id =
+          get_dataset(group_id, dataset_name, complex_id, datasp_id);
 
-    auto dataset_name = "omega" + std::to_string(static_cast<int>(omega));
-    // Create or open dataset.
-    auto dataset_id =
-        get_dataset(group_id, dataset_name, complex_id, datasp_id);
+      add_attribute(group_id, dataset_name, "shape", "2d sq");
+      add_attribute(group_id, dataset_name, "pts per", pts_per_wavelen);
+      add_attribute(group_id, dataset_name, "abs rho", absorber_ratio);
+      add_attribute(group_id, dataset_name, "omega", omega);
+      add_attribute(group_id, dataset_name, "int dom len",
+                    interior_domain_lens[0]);
+      add_attribute(group_id, dataset_name, "int dom elm", interior_elems[0]);
+      add_attribute(group_id, dataset_name, "abs elm", absorber_elems[0]);
+      add_attribute(group_id, dataset_name, "v max", v_max);
 
-    add_attribute(group_id, dataset_name, "shape", "2d sq");
-    add_attribute(group_id, dataset_name, "pts per", pts_per_wavelen);
-    add_attribute(group_id, dataset_name, "abs rho", absorber_ratio);
-    add_attribute(group_id, dataset_name, "omega", omega);
-    add_attribute(group_id, dataset_name, "int dom len",
-                  interior_domain_lens[0]);
-    add_attribute(group_id, dataset_name, "int dom elm", interior_elems[0]);
-    add_attribute(group_id, dataset_name, "abs elm", absorber_elems[0]);
-    add_attribute(group_id, dataset_name, "v max", v_max);
+      H5Dwrite(dataset_id, complex_id, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+               eigvals.data());
 
-    H5Dwrite(dataset_id, complex_id, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-             eigvals.data());
-
-    H5Tclose(complex_id);
-    H5Sclose(datasp_id);
+      H5Tclose(complex_id);
+      H5Sclose(datasp_id);
+    }
   }
 
   // Close hdf5 database.
