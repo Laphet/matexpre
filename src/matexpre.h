@@ -39,18 +39,19 @@ template <unsigned int DIM> class MatExpre {
 private:
   // The size of the domain in each direction (0, Lx)x(0, Ly)x(0, Lz).
   PetscReal interior_domain_lens[DIM];
-  // The size of the domain including absorbing layers in each direction,
-  // this should be computed from domainExt_size.
-  PetscInt absorber_elems[DIM];
-  // Number of cells in each direction.
+  // The Number of cells in the interior domain, which we care about.
   PetscInt interior_elems[DIM];
-  // Number of cells including absorbing layers in each direction.
+  // The number of cells of in absorbing layers in each direction,
+  PetscInt absorber_elems[DIM];
+
+  // The Number of cells including absorbing layers in each direction, which is
+  // the total DoF.
   PetscInt total_elems[DIM];
-  // Cell sizes in each direction.
+  // The cell sizes in each direction.
   PetscReal h[DIM];
   // The width of the absorbing layer in each direction.
   PetscReal absorber_lens[DIM];
-  // The Petsc vector of W(r)
+  // The Petsc DMDA vector of W(r)
   Vec W;
 
   // FFTW context, just do not trust the PETSC FFTW interface.
@@ -77,6 +78,7 @@ private:
   PetscErrorCode _apply_exp_A(PetscScalar coeff);
 
 public:
+  // The main DM object, and the data partition is determined by FFTW routines.
   DM dm;
   // The Petsc vector of the velocity field, initialized by the user.
   // Users should set the velocity field before calling the apply method.
