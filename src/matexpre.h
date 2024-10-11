@@ -37,23 +37,7 @@ const PetscReal GL_QUAD_WGH_5[5] = {1.0 / 10.0, 49.0 / 90.0, 32.0 / 45.0,
 
 template <unsigned int DIM> class MatExpre {
 private:
-  // The size of the domain in each direction (0, Lx)x(0, Ly)x(0, Lz).
-  PetscReal interior_domain_lens[DIM];
-  // The Number of cells in the interior domain, which we care about.
-  PetscInt interior_elems[DIM];
-  // The number of cells of in absorbing layers in each direction,
-  PetscInt absorber_elems[DIM];
-
-  // The Number of cells including absorbing layers in each direction, which is
-  // the total DoF.
-  PetscInt total_elems[DIM];
-  // The cell sizes in each direction.
-  PetscReal h[DIM];
-  // The width of the absorbing layer in each direction.
-  PetscReal absorber_lens[DIM];
-  // The Petsc DMDA vector of W(r)
   Vec W;
-
   // FFTW context, just do not trust the PETSC FFTW interface.
   fftw_plan forward_plan, backward_plan;
   // The FFTW3 data array, the size is determined by FFTW, which may contain
@@ -92,6 +76,22 @@ public:
   PetscReal tau;
   // The number of quandrature points in [0, tau].
   PetscInt num_quad_points;
+
+  // The size of the domain in each direction (0, Lx)x(0, Ly)x(0, Lz).
+  PetscReal interior_domain_lens[DIM];
+  // The Number of cells in the interior domain, which we care about.
+  PetscInt interior_elems[DIM];
+  // The number of cells of in absorbing layers in each direction,
+  PetscInt absorber_elems[DIM];
+
+  // The Number of cells including absorbing layers in each direction, which is
+  // the total DoF.
+  PetscInt total_elems[DIM];
+  // The cell sizes in each direction.
+  PetscReal h[DIM];
+  // The width of the absorbing layer in each direction.
+  PetscReal absorber_lens[DIM];
+  // The Petsc DMDA vector of W(r)
 
   MatExpre();
 

@@ -1,4 +1,8 @@
-add_executable(main get_mat_eigenvals.cxx matexpre.cxx hello_hdf5.cxx)
+add_executable(main 
+test_absorbing_potential.cxx
+# hello_hdf5.cxx
+# get_mat_eigenvals.cxx 
+matexpre.cxx)
 
 # Manually set the include and library directories for SLEPc and FFTW3.
 target_include_directories(main PUBLIC ${SLEPC_INCLUDE_DIRS} ${FFTW3_INCLUDE_DIRS})

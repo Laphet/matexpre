@@ -146,12 +146,11 @@ template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::_setup() {
     // PetscInt xs = 0, ys = 0, xl = 0, yl = 0;
     // PetscCall(DMDAGetCorners(dm, &xs, &ys, nullptr, &xl, &yl, nullptr));
 
-    DMDACoor2d **acoords_2d = nullptr;
+    DMDACoor2d **acoords_2d = reinterpret_cast<DMDACoor2d **>(acoords);
     PetscScalar **aWxyz_2d[2] = {nullptr, nullptr};
     for (unsigned int i = 0; i < 2; ++i) {
       aWxyz_2d[i] = reinterpret_cast<PetscScalar **>(aWxyz[i]);
     }
-    acoords_2d = reinterpret_cast<DMDACoor2d **>(acoords);
 
     for (PetscInt ey = local_0_start; ey < local_0_start + local_n0; ++ey) {
       for (PetscInt ex = 0; ex < total_elems[0]; ++ex) {
@@ -186,12 +185,11 @@ template <unsigned int DIM> PetscErrorCode MatExpre<DIM>::_setup() {
   }
 
   if constexpr (DIM == 3) {
-    DMDACoor3d ***acoords_3d = nullptr;
+    DMDACoor3d ***acoords_3d = reinterpret_cast<DMDACoor3d ***>(acoords);
     PetscScalar ***aWxyz_3d[3] = {nullptr, nullptr, nullptr};
     for (unsigned int i = 0; i < 3; ++i) {
       aWxyz_3d[i] = reinterpret_cast<PetscScalar ***>(aWxyz[i]);
     }
-    acoords_3d = reinterpret_cast<DMDACoor3d ***>(acoords);
 
     for (PetscInt ez = local_0_start; ez < local_0_start + local_n0; ++ez) {
       for (PetscInt ey = 0; ey < total_elems[1]; ++ey) {
