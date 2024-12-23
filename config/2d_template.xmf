@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" [
+]>
+<Xdmf xmlns:xi="http://www.w3.org/2001/XInclude" Version="2.2">
+  <!-- Name + Value is the all information. -->
+  <Information Name="$INFO$" Value="$ADITIONAL_INFO$" />
+  <Domain>
+    <Grid Name="Structured Grid" GridType="Uniform">
+      <Topology TopologyType="2DCoRectMesh" Dimensions="$GRID_DIMENSIONS$" />
+      <Geometry GeometryType="ORIGIN_DXDY">
+        <DataItem Name="Origin" Dimensions="2" NumberType="Float" Precision="4" Format="XML">
+          $ORIGIN$ </DataItem>
+        <DataItem Name="Spacing" Dimensions="2" NumberType="Float" Precision="4" Format="XML">
+          $SPACING$ </DataItem>
+      </Geometry>
+      <Attribute Name="$VEC_NAME$" AttributeType="Vector" Center="Cell">
+        <DataItem Dimensions="$GRID_DIMENSIONS$ 2" NumberType="Float" Precision="8" Format="HDF">
+          $HDF5_FILE$:/$HDF5_GROUP$/$VEC_NAME$</DataItem>
+      </Attribute>
+    </Grid>
+  </Domain>
+</Xdmf>

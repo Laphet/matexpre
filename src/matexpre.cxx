@@ -13,6 +13,7 @@
 #include "petscsystypes.h"
 #include "petscvec.h"
 #include <cmath>
+#include <complex>
 #include <cstdlib>
 #include <fftw3-mpi.h>
 #include <gsl/gsl_pow_int.h>
@@ -644,4 +645,66 @@ PetscErrorCode pc_apply_3d(PC pc, Vec input, Vec output) {
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&matexpre)));
   PetscCall(matexpre->pc_apply(input, output));
   PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+template <unsigned int DIM>
+PetscScalar
+PerfectlyMatchedLayer<DIM>::get_d_s_hat(PetscReal s, PetscReal absorber_len,
+                                        PetscReal interior_domain_len) {
+  if (s < 0.0)
+    return std::complex<PetscReal>(1.0, eta / omega * (-s));
+  if (s > interior_domain_len)
+    return std::complex<PetscReal>(1.0,
+                                   eta / omega * (s - interior_domain_len));
+  return std::complex<PetscReal>(1.0, 0.0);
+}
+
+template <unsigned int DIM>
+PerfectlyMatchedLayer<DIM>::PerfectlyMatchedLayer(
+    const PetscReal _interior_domain_lens[DIM],
+    const PetscInt _interior_elems[DIM], const PetscInt _absorber_elems[DIM]) {
+  for (unsigned int i = 0; i < DIM; ++i) {
+    interior_domain_lens[i] = _interior_domain_lens[i];
+    interior_elems[i] = _interior_elems[i];
+    absorber_elems[i] = _absorber_elems[i];
+  }
+
+  // Process other parameters.
+  for (unsigned int i = 0; i < DIM; ++i) {
+    total_elems[i] = interior_elems[i] + 2 * absorber_elems[i];
+    h[i] = interior_domain_lens[i] / interior_elems[i];
+    absorber_lens[i] = h[i] * absorber_elems[i];
+  }
+
+  // Create the DMDA for the physical domain, use c++17 if constexpr.
+  // DMDA is used to manage the point values of the physical domain, therefore
+  // the size should be (N+1)
+  if constexpr (DIM == 2) {
+    PetscCall(DMDACreate2d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
+                           DMDA_STENCIL_STAR, total_elems[0] + 1,
+                           total_elems[1] + 1, PETSC_DECIDE, PETSC_DECIDE, 1, 1,
+                           nullptr, nullptr, &dm));
+
+    PetscCall(DMSetUp(dm));
+    // Set the coordinates of the DMDA.
+    PetscCall(DMDASetUniformCoordinates(
+        dm, -absorber_lens[0], interior_domain_lens[0] + absorber_lens[0],
+        -absorber_lens[1], interior_domain_lens[1] + absorber_lens[1], 0.0,
+        0.0));
+  }
+
+  if constexpr (DIM == 3) {
+    PetscCall(DMDACreate3d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
+                           DM_BOUNDARY_NONE, DMDA_STENCIL_STAR,
+                           total_elems[0] + 1, total_elems[1] + 1,
+                           total_elems[2] + 1, PETSC_DECIDE, PETSC_DECIDE,
+                           PETSC_DECIDE, 1, 1, nullptr, nullptr, nullptr, &dm));
+    PetscCall(DMSetUp(dm));
+
+    // Set the coordinates of the DMDA.
+    PetscCall(DMDASetUniformCoordinates(
+        dm, -absorber_lens[0], interior_domain_lens[0] + absorber_lens[0],
+        -absorber_lens[1], interior_domain_lens[1] + absorber_lens[1],
+        -absorber_lens[2], interior_domain_lens[2] + absorber_lens[2]));
+  }
 }

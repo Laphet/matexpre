@@ -17,6 +17,7 @@ cmake_minimum_required(VERSION 3.1.0)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(CMAKE_CXX_STANDARD_REQUIRED 17 )
 
+
 # Set verbose output during configuration
 # Set in vscode plugin instead
 # set(CMAKE_VERBOSE_MAKEFILE TRUE)
@@ -35,13 +36,13 @@ set(PETSC $ENV{PETSC_DIR}/$ENV{PETSC_ARCH})
 set(ENV{PKG_CONFIG_PATH} ${PETSC}/lib/pkgconfig)
 
 # Remove the lines below if you do not wish to have PETSc determine the compilers
-execute_process ( COMMAND pkg-config PETSc --variable=ccompiler COMMAND tr -d '\n' OUTPUT_VARIABLE C_COMPILER)
+execute_process(COMMAND pkg-config PETSc --variable=ccompiler COMMAND tr -d '\n' OUTPUT_VARIABLE C_COMPILER)
 SET(CMAKE_C_COMPILER ${C_COMPILER})
-execute_process ( COMMAND pkg-config PETSc --variable=cxxcompiler COMMAND tr -d '\n' OUTPUT_VARIABLE CXX_COMPILER)
+execute_process(COMMAND pkg-config PETSc --variable=cxxcompiler COMMAND tr -d '\n' OUTPUT_VARIABLE CXX_COMPILER)
 if (CXX_COMPILER)
   SET(CMAKE_CXX_COMPILER ${CXX_COMPILER})
 endif (CXX_COMPILER)
-execute_process ( COMMAND pkg-config PETSc --variable=fcompiler COMMAND tr -d '\n' OUTPUT_VARIABLE FORTRAN_COMPILER)
+execute_process(COMMAND pkg-config PETSc --variable=fcompiler COMMAND tr -d '\n' OUTPUT_VARIABLE FORTRAN_COMPILER)
 if (FORTRAN_COMPILER)
   SET(CMAKE_Fortran_COMPILER ${FORTRAN_COMPILER})
   enable_language(Fortran)
@@ -107,4 +108,11 @@ pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
 #  tells CMake to build the application ex1 from the source file ex1.c
 #  this must appear AFTER the compilers are set
 project(matexpre CXX)
+
+# Put the executable in the bin directory.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
+
 add_subdirectory(src)
+
+
+

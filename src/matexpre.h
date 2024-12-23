@@ -111,3 +111,48 @@ public:
 // Warp the pc_apply method into a C interface.
 extern "C" PetscErrorCode pc_apply_2d(PC pc, Vec input, Vec output);
 extern "C" PetscErrorCode pc_apply_3d(PC pc, Vec input, Vec output);
+
+template <unsigned int DIM> class PerfectlyMatchedLayer {
+private:
+  // s_hat(s) = s + i eta sigma(s) / omega, -abs < s < L + abs.
+  // if s < 0, sigma(s) = -s^2 / 2
+  // if s > L, sigma(s) = (s - L)^2 / 2
+  // else, sigma(s) = 0
+  inline PetscScalar get_d_s_hat(PetscReal s, PetscReal absorber_len,
+                                 PetscReal interior_domain_len);
+
+public:
+  // The main DM object, included PML.
+  DM dm;
+  // The Petsc vector of the velocity field, initialized by the user.
+  // Users should set the velocity field before calling the apply method.
+  // Users should destroy the vector.
+  Vec velocity;
+  // Frequency.
+  PetscReal omega;
+  // Absorbing constant.
+  PetscReal eta;
+
+  // The size of the domain in each direction (0, Lx)x(0, Ly)x(0, Lz).
+  PetscReal interior_domain_lens[DIM];
+  // The Number of cells in the interior domain, which we care about.
+  PetscInt interior_elems[DIM];
+  // The number of cells of in absorbing layers in each direction,
+  PetscInt absorber_elems[DIM];
+
+  // The Number of cells including absorbing layers in each direction, which is
+  // *not* the total DoF.
+  PetscInt total_elems[DIM];
+  // The cell sizes in each direction.
+  PetscReal h[DIM];
+  // The width of the absorbing layer in each direction.
+  PetscReal absorber_lens[DIM];
+
+  PerfectlyMatchedLayer(const PetscReal _interior_domain_lens[DIM],
+                        const PetscInt _interior_elems[DIM],
+                        const PetscInt _absorber_elems[DIM]);
+
+  PetscErrorCode get_mat(Mat A);
+
+  ~PerfectlyMatchedLayer();
+};
