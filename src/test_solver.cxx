@@ -2,7 +2,9 @@
 #include "petscerror.h"
 #include "petscksp.h"
 #include "petscmat.h"
+#include "petscoptions.h"
 #include "petscsys.h"
+#include "petscsystypes.h"
 #include "petscvec.h"
 #include "solver.h"
 
@@ -16,10 +18,28 @@ int main(int argc, char **argv) {
 
     PetscInt pts_per_wavelen = 10;
     PetscInt k = 20;
-    double omega = 2.0 * PETSC_PI * k;
+    PetscInt absorber_elems = 10;
+    double omega = -1.0;
+    PetscBool use_csp = PETSC_FALSE, use_matex = PETSC_FALSE;
+
+    // Get options from command line.
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pts_per_wavelen",
+                                 &pts_per_wavelen, nullptr));
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-k", &k, nullptr));
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-absorber_elems",
+                                 &absorber_elems, nullptr));
+    PetscCall(
+        PetscOptionsGetBool(nullptr, nullptr, "-use_csp", &use_csp, nullptr));
+    PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-use_matex", &use_matex,
+                                  nullptr));
+
+    // Update omega through k.
+    omega = 2.0 * PETSC_PI * k;
+    // Test omega=0.
+    // omega = 0.0;
 
     // "solver" will be automatically cleaned up after the scope.
-    Solver<2> solver(pts_per_wavelen * k, 10);
+    Solver<2> solver(pts_per_wavelen * k, absorber_elems);
 
     // Create velocity vector.
     PetscCall(DMCreateGlobalVector(solver.dm, &velocity));
@@ -35,7 +55,11 @@ int main(int argc, char **argv) {
     // Create matrix.
     PetscCall(DMCreateMatrix(solver.dm, &A));
     PetscCall(solver.get_laplace_mat(A, omega));
-    PetscCall(solver.get_final_mat(A, velocity, omega));
+    PetscCall(get_shifted_velocity_mat(A, velocity, -omega * omega));
+    // PetscCall(PetscPrintf(
+    //     PETSC_COMM_WORLD,
+    //     "Test -i omega / v^2 Id - Laplace.\n Is this matrix easy to
+    //     solve?\n"));
     // Create solution vector.
     PetscCall(DMCreateGlobalVector(solver.dm, &u));
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(u), "solution"));
@@ -45,8 +69,21 @@ int main(int argc, char **argv) {
     PetscCall(KSPSetOperators(ksp, A, A));
     PetscCall(KSPSetFromOptions(ksp));
     // PetscCall(KSPSetNormType(ksp, KSP_NORM_UNPRECONDITIONED));
+    if (use_csp) {
+      ComplexShiftPre csp_ctx = {0.1, omega, velocity, nullptr, nullptr};
+      PC pc = nullptr;
+      PetscCall(KSPGetPC(ksp, &pc));
+      PetscCall(PCShell_ComplexShiftPre(pc, &csp_ctx));
+    }
+    if (use_matex) {
+      MatExPre matex_ctx = {1, 4, omega, solver.dm, velocity, nullptr, nullptr};
+      PC pc = nullptr;
+      PetscCall(KSPGetPC(ksp, &pc));
+      PetscCall(PCShell_MatExPre(pc, &matex_ctx));
+    }
     PetscCall(KSPSetUp(ksp));
     PetscCall(KSPSolve(ksp, source, u));
+    PetscCall(KSPConvergedReasonView(ksp, nullptr));
 
     // Get info.
     PetscCall(solver.print_info());
@@ -66,7 +103,7 @@ int main(int argc, char **argv) {
                           its, residual_norm / source_norm, source_norm,
                           residual_norm));
 
-    PetscCall(solver.save_xdmf_hdf5(u, "-test", "data.hdf5", "pml_solver"));
+    // PetscCall(solver.save_xdmf_hdf5(u, "-test", "data.hdf5", "pml_solver"));
 
     // Clean up.
     PetscCall(DMRestoreGlobalVector(solver.dm, &residual));
@@ -79,3 +116,36 @@ int main(int argc, char **argv) {
 
   PetscCall(PetscFinalize());
 }
+
+// Tests.
+/*
+
+mpiexec -n 16 ./main -k 20 -absorber_elems 10
+  iter: 654
+mpiexec -n 16 ./main -k 20 -absorber_elems 10 -use_csp -csp_ksp_max_it 1/2
+  BREAKDOWN at iter=30
+mpiexec -n 16 ./main -k 20 -absorber_elems 10 -use_csp -csp_ksp_max_it 1
+-csp_shift 0.1
+  BREAKDOWN at iter=30
+mpiexec -n 16 ./main -k 20 -absorber_elems 10 -use_csp -csp_ksp_type preonly
+-csp_shift 3.0
+  Diverge at iter=10000
+mpiexec -n 16 ./main -k 20 -absorber_elems 10 -pc_type gamg
+  Diverge at iter=10000
+mpiexec -n 16 ./main -k 20 -absorber_elems 10 -use_csp -csp_pc_type asm
+  iter 9
+mpiexec -n 16 ./main -k 40 -absorber_elems 10 -use_csp -csp_pc_type asm
+  iter 13
+mpiexec -n 16 ./main -k 80 -absorber_elems 10 -use_csp -csp_pc_type asm
+  iter 20
+mpiexec -n 16 ./main -k 80 -absorber_elems 10 -pc_type asm
+  iter 1421
+mpiexec -n 16 ./main -k 80 -absorber_elems 10
+  iter 1562
+mpiexec -n 16 ./main -k 40 -absorber_elems 10 -use_csp -csp_ksp_type preonly
+-csp_pc_type lu -ksp_monitor_true_residual
+iter 13
+
+mpiexec -n 16 ./main -k 40 -absorber_elems 10 -use_matex -matex_ksp_type preonly
+-matex_pc_type lu
+*/

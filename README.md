@@ -1,17 +1,26 @@
-Two petsc libraries are installed in this machine.
+# Install Petsc
+Assume intel-oneapi-mpi and mkl are proper, which means that you can correctly find mpiicc, mpiifort, mpiicpc, and ${MKLROOT}
 
-lb7o2mq petsc@3.21.4
-kblu3i2 petsc@3.21.4 
-
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/oneapi-2024.2.1/intel-oneapi-mkl-2024.2.1-yvpg63vrrx2hp2icblx6putxmrwihu5a/mkl/2024.2/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/gcc-11.4.0/intel-oneapi-mpi-2021.13.1-j3ne6af5dwi4z2ohau6fvm37s3qt7jz7/mpi/2021.13/opt/mpi/libfabric/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/gcc-11.4.0/intel-oneapi-mpi-2021.13.1-j3ne6af5dwi4z2ohau6fvm37s3qt7jz7/mpi/2021.13/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/gcc-11.4.0/intel-oneapi-compilers-2024.2.1-xjrfcqogxdrck7rwantsszrjforrkuit/compiler/2024.2/opt/compiler/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/gcc-11.4.0/intel-oneapi-compilers-2024.2.1-xjrfcqogxdrck7rwantsszrjforrkuit/compiler/2024.2/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/oneapi-2024.2.1/intel-oneapi-mkl-2024.2.1-yvpg63vrrx2hp2icblx6putxmrwihu5a/mkl/2024.2/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/gcc-11.4.0/intel-oneapi-mpi-2021.13.1-j3ne6af5dwi4z2ohau6fvm37s3qt7jz7/mpi/2021.13/opt/mpi/libfabric/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/gcc-11.4.0/intel-oneapi-mpi-2021.13.1-j3ne6af5dwi4z2ohau6fvm37s3qt7jz7/mpi/2021.13/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/gcc-11.4.0/intel-oneapi-compilers-2024.2.1-xjrfcqogxdrck7rwantsszrjforrkuit/compiler/2024.2/opt/compiler/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/gcc-11.4.0/intel-oneapi-compilers-2024.2.1-xjrfcqogxdrck7rwantsszrjforrkuit/compiler/2024.2/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/oneapi-2024.2.1/hdf5-1.14.3-6666ykmtjygcerfnfjm7cultvqfsoqtj/lib:
-/home/cqye/spack/opt/spack/linux-ubuntu22.04-skylake/oneapi-2024.2.1/hdf5-1.14.3-6666ykmtjygcerfnfjm7cultvqfsoqtj/lib
+./configure \
+PETSC_ARCH=linux-oneapi-opt \
+--CC=mpiicc \
+--FC=mpiifort \
+--CXX=mpiicpc \
+--with-debugging=0 \
+--CFLAGS='-O3 -qopenmp -qmkl -xhost' \
+--FFLAGS='-O3 -qopenmp -qmkl -xhost' \
+--CXXFLAGS='-O3 -qopenmp -qmkl -xhost' \
+--with-blaslapack-dir=${MKLROOT} \
+--with-mkl_cpardiso-dir=${MKLROOT} \
+--download-scalapack=1 \
+--with-scalar-type=complex \
+---with-openmp-kernels=1 \
+--download-slepc=1 \
+--download-mumps=1 \
+--download-suitesparse=1 \
+--download-hdf5=1 \
+--download-sowing=1 \
+--download-metis=1 \
+--download-parmetis=1 \
+--download-superlu_dist=1 \
+--download-hypre=1

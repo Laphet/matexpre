@@ -1,4 +1,5 @@
 #include "petscdm.h"
+#include "petscksp.h"
 #include <complex>
 #include <cstddef>
 
@@ -57,8 +58,6 @@ public:
 
   PetscErrorCode get_laplace_mat(Mat A, const double omega);
 
-  PetscErrorCode get_final_mat(Mat A, Vec v, const double omega);
-
   PetscErrorCode print_info();
 
   // The .hdf5 and .xmf files will be save in the DATA_FOLDERPATH.
@@ -74,6 +73,9 @@ public:
   ~Solver();
 };
 
+// A -> A + alpha / v^2 Id.
+PetscErrorCode get_shifted_velocity_mat(Mat A, Vec v, const PetscScalar alpha);
+
 // Functions.
 std::complex<double> func_one(const double x, const double y, const double z,
                               void *ctx);
@@ -86,3 +88,34 @@ struct GaussianCtx {
 
 std::complex<double> func_gaussian(const double x, const double y,
                                    const double z, void *ctx);
+
+// Complex shift preconditioner.
+struct ComplexShiftPre {
+  // P = - (1+i shift) omega^2/v^2 - Delta.
+  double shift;
+  double omega;
+  Vec velocity;
+  Mat P_mat;
+  KSP P_ksp;
+};
+extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc);
+extern PetscErrorCode PCApply_ComplexShiftPre(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_ComplexShiftPre(PC pc);
+PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx);
+
+// Schrodinger time-domain preconditioner.
+// Crank-Nicolson scheme.
+struct MatExPre {
+  PetscInt periods;
+  PetscInt time_steps_per_period;
+  double omega;
+  DM dm;
+  Vec velocity;
+  // Z = -2i omega / (v^2 * delta t) - Delta.
+  Mat Z_mat;
+  KSP Z_ksp;
+};
+extern PetscErrorCode PCSetUp_MatExPre(PC pc);
+extern PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_MatExPre(PC pc);
+PetscErrorCode PCShell_MatExPre(PC pc, MatExPre *ctx);

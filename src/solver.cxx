@@ -2,6 +2,9 @@
 #include "petscdm.h"
 #include "petscdmda.h"
 #include "petscerror.h"
+#include "petscksp.h"
+#include "petscmat.h"
+#include "petscpc.h"
 #include "petscsys.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
@@ -286,27 +289,6 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-template <unsigned int DIM>
-PetscErrorCode Solver<DIM>::get_final_mat(Mat mat, Vec v, const double omega) {
-  // Stack variables.
-  Vec temp = nullptr;
-
-  PetscFunctionBeginUser;
-
-  // Create a temporary vector.
-  PetscCall(DMGetGlobalVector(dm, &temp));
-  // temp = -omega^2 / v^2.
-  PetscCall(VecPointwiseMult(temp, v, v));
-  PetscCall(VecReciprocal(temp));
-  PetscCall(VecScale(temp, -omega * omega));
-  // mat = mat + diag(temp).
-  PetscCall(MatDiagonalSet(mat, temp, ADD_VALUES));
-  // Destroy the temporary vector.
-  PetscCall(DMRestoreGlobalVector(dm, &temp));
-
-  PetscFunctionReturn(PETSC_SUCCESS);
-}
-
 template <unsigned int DIM> Solver<DIM>::~Solver() {
   // According to the PETSc manual, it is prefered to use PetscCallAbort.
   PetscCallAbort(PETSC_COMM_SELF, DMDestroy(&dm));
@@ -453,6 +435,28 @@ PetscErrorCode Solver<DIM>::save_xdmf_hdf5(Vec v,
 template class Solver<2>;
 template class Solver<3>;
 
+PetscErrorCode get_shifted_velocity_mat(Mat A, Vec v, const PetscScalar alpha) {
+  // Stack variables.
+  DM dm = nullptr;
+  Vec temp = nullptr;
+
+  PetscFunctionBeginUser;
+  // Get the DM from the vector.
+  PetscCall(VecGetDM(v, &dm));
+  // Create a temporary vector.
+  PetscCall(DMGetGlobalVector(dm, &temp));
+  // temp = alpha / v^2.
+  PetscCall(VecPointwiseMult(temp, v, v));
+  PetscCall(VecReciprocal(temp));
+  PetscCall(VecScale(temp, alpha));
+  // mat = mat + diag(temp).
+  PetscCall(MatDiagonalSet(A, temp, ADD_VALUES));
+  // Destroy the temporary vector.
+  PetscCall(DMRestoreGlobalVector(dm, &temp));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 // Functions.
 std::complex<double> func_one(const double x, const double y, const double z,
                               void *ctx) {
@@ -465,4 +469,188 @@ std::complex<double> func_gaussian(const double x, const double y,
   double x0 = ctx->position[0], y0 = ctx->position[1], z0 = ctx->position[2];
   double d = (x - x0) * (x - x0) + (y - y0) * (y - y0) + (z - z0) * (z - z0);
   return ctx->coefficent * std::exp(-d / (2.0 * ctx->sigma * ctx->sigma));
+}
+
+// Complex shift preconditioner.
+extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
+  // Stack variables.
+  ComplexShiftPre *ctx = nullptr;
+  Mat A = nullptr;
+  PC P_pc = nullptr;
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  // Construct P = A - shift Iu.
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-csp_shift", &ctx->shift,
+                                nullptr));
+  PetscCheck(ctx->shift >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The shift must be non-negative, but got %f.\n", ctx->shift);
+
+  PetscCall(PCGetOperators(pc, &A, nullptr));
+  PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->P_mat));
+  PetscCall(get_shifted_velocity_mat(
+      ctx->P_mat, ctx->velocity, -ctx->omega * ctx->omega * IU * ctx->shift));
+  // Set up the KSP for P^{-1} b = u.
+  PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->P_ksp));
+  PetscCall(KSPSetOperators(ctx->P_ksp, ctx->P_mat, ctx->P_mat));
+  // Set the initial guess to be nonzero, through the input vector.
+  // PetscCall(KSPSetInitialGuessNonzero(ctx->P_ksp, PETSC_TRUE));
+  // Set default AMG preconditioner for P.
+  PetscCall(KSPGetPC(ctx->P_ksp, &P_pc));
+  PetscCall(PCSetType(P_pc, PCGAMG));
+  // Allow CML options.
+  PetscCall(PCSetOptionsPrefix(P_pc, "csp_"));
+  PetscCall(KSPSetOptionsPrefix(ctx->P_ksp, "csp_"));
+  PetscCall(KSPSetFromOptions(ctx->P_ksp));
+  // KSPSetUp setup will call PCSetUp.
+  PetscCall(KSPSetUp(ctx->P_ksp));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCApply_ComplexShiftPre(PC pc, Vec in, Vec out) {
+  // Stack variables.
+  ComplexShiftPre *ctx = nullptr;
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(KSPSolve(ctx->P_ksp, in, out));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCDestroy_ComplexShiftPre(PC pc) {
+  // Stack variables.
+  ComplexShiftPre *ctx = nullptr;
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(MatDestroy(&ctx->P_mat));
+  // KSPDestroy will call PCDestroy.
+  PetscCall(KSPDestroy(&ctx->P_ksp));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx) {
+  PetscFunctionBeginUser;
+
+  PetscCall(PCSetType(pc, PCSHELL));
+  PetscCall(PCShellSetContext(pc, ctx));
+  PetscCall(PCShellSetApply(pc, PCApply_ComplexShiftPre));
+  PetscCall(PCShellSetSetUp(pc, PCSetUp_ComplexShiftPre));
+  PetscCall(PCShellSetDestroy(pc, PCDestroy_ComplexShiftPre));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+// MatExPre.
+extern PetscErrorCode PCSetUp_MatExPre(PC pc) { // Stack variables.
+  MatExPre *ctx = nullptr;
+  Mat A = nullptr;
+  PC Z_pc = nullptr;
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  // Construct Z = -2i omega / (v^2 * delta t) Id - Delta.
+  // Note that -Delta = A + omega^2 / v^2 Id, therefore Z = A + (-2i omega /
+  // delta t + omega^2) / v^2. delta t = 2 pi / (omega * steps) => Z = A + (-
+  // i steps /  pi + 1) omega^2 / v^2 Id.
+  PetscCall(PCGetOperators(pc, &A, nullptr));
+  PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->Z_mat));
+  PetscCall(get_shifted_velocity_mat(
+                ctx->Z_mat, ctx->velocity,
+                (-IU * ctx->time_steps_per_period / PETSC_PI + 1.0)) *
+            ctx->omega * ctx->omega);
+  // Set up the KSP for Z^{-1} b = u.
+  PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->Z_ksp));
+  PetscCall(KSPSetOperators(ctx->Z_ksp, ctx->Z_mat, ctx->Z_mat));
+  PetscCall(KSPGetPC(ctx->Z_ksp, &Z_pc));
+  // Allow CML options.
+  PetscCall(PCSetOptionsPrefix(Z_pc, "matex_"));
+  PetscCall(KSPSetOptionsPrefix(ctx->Z_ksp, "matex_"));
+  PetscCall(KSPSetFromOptions(ctx->Z_ksp));
+  // KSPSetUp setup will call PCSetUp.
+  PetscCall(KSPSetUp(ctx->Z_ksp));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
+  // Stack variables.
+  MatExPre *ctx = nullptr;
+  // Use CU here to keep sol as the initial guess for the next iteration.
+  Vec U = nullptr, rhs = nullptr, CU = nullptr, sol = nullptr;
+  DM dm = nullptr;
+  double time_int_weight = 0.0, delta_t = 0.0;
+  auto expim = [&](const double x) { return std::cos(x) + IU * std::sin(x); };
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
+  time_int_weight = 1.0 / (ctx->periods * ctx->time_steps_per_period);
+  dm = ctx->dm;
+  PetscCall(VecZeroEntries(out));
+  // Create temporary vectors.
+  PetscCall(DMGetGlobalVector(dm, &U));
+  PetscCall(VecZeroEntries(U));
+  PetscCall(DMGetGlobalVector(dm, &rhs));
+  PetscCall(DMGetGlobalVector(dm, &CU));
+  PetscCall(DMGetGlobalVector(dm, &sol));
+  PetscCall(VecZeroEntries(sol));
+  for (unsigned int i = 1; i <= ctx->time_steps_per_period * ctx->periods;
+       ++i) {
+    // rhs -> 2exp(-i omega t^(k+0.5)) f.
+    PetscCall(VecCopy(in, rhs));
+    PetscCall(VecScale(rhs, 2.0 * expim(-ctx->omega * (i + 0.5) * delta_t)));
+    // CU -> U / v^2.
+    PetscCall(VecPointwiseDivide(CU, U, ctx->velocity));
+    PetscCall(VecPointwiseDivide(CU, CU, ctx->velocity));
+    // rhs -> rhs + -4i omega / detla_t CU.
+    PetscCall(VecAXPY(rhs, -4.0 * IU * ctx->omega / delta_t, CU));
+    // Solve Z sol = rhs.
+    PetscCall(KSPSolve(ctx->Z_ksp, rhs, sol));
+    // U -> sol - U.
+    PetscCall(VecAYPX(U, -1.0, sol));
+    // out -> out + alpha U exp(i omega t^k).
+    if (i < ctx->time_steps_per_period * ctx->periods)
+      PetscCall(
+          VecAXPY(out, expim(ctx->omega * i * delta_t) * time_int_weight, U));
+    else
+      PetscCall(VecAXPY(
+          out, expim(ctx->omega * i * delta_t) * time_int_weight * 0.5, U));
+  }
+
+  // Destroy the temporary vectors.
+  PetscCall(DMRestoreGlobalVector(dm, &CU));
+  PetscCall(DMRestoreGlobalVector(dm, &rhs));
+  PetscCall(DMRestoreGlobalVector(dm, &U));
+  PetscCall(DMRestoreGlobalVector(dm, &sol));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCDestroy_MatExPre(PC pc) {
+  // Stack variables.
+  MatExPre *ctx = nullptr;
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(MatDestroy(&ctx->Z_mat));
+  // KSPDestroy will call PCDestroy.
+  PetscCall(KSPDestroy(&ctx->Z_ksp));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCShell_MatExPre(PC pc, MatExPre *ctx) {
+  PetscFunctionBeginUser;
+
+  PetscCall(PCSetType(pc, PCSHELL));
+  PetscCall(PCShellSetContext(pc, ctx));
+  PetscCall(PCShellSetApply(pc, PCApply_MatExPre));
+  PetscCall(PCShellSetSetUp(pc, PCSetUp_MatExPre));
+  PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPre));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
