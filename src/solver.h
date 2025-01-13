@@ -104,14 +104,15 @@ extern PetscErrorCode PCDestroy_ComplexShiftPre(PC pc);
 PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx);
 
 // Schrodinger time-domain preconditioner.
-// Crank-Nicolson scheme.
+// -i omega dot(U) alpha - omega^2 U (1-alpha) - v^2 Delta U = g
 struct MatExPre {
   PetscInt periods;
   PetscInt time_steps_per_period;
+  PetscScalar alpha;
   double omega;
   DM dm;
   Vec velocity;
-  // Z = -2i omega / (v^2 * delta t) - Delta.
+  // Z = (-i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
   Mat Z_mat;
   KSP Z_ksp;
 };

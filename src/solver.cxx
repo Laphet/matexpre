@@ -4,15 +4,16 @@
 #include "petscerror.h"
 #include "petscksp.h"
 #include "petscmat.h"
+#include "petscoptions.h"
 #include "petscpc.h"
 #include "petscsys.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
+#include "petscviewerhdf5.h"
 #include <cmath>
 #include <complex>
 #include <cstdlib>
 #include <fstream>
-#include <petscviewerhdf5.h>
 #include <string>
 
 template <unsigned int DIM>
@@ -549,19 +550,30 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) { // Stack variables.
   MatExPre *ctx = nullptr;
   Mat A = nullptr;
   PC Z_pc = nullptr;
+  PetscScalar shift = 0.0;
+  PetscReal delta_t = 0.0;
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  // Construct Z = -2i omega / (v^2 * delta t) Id - Delta.
-  // Note that -Delta = A + omega^2 / v^2 Id, therefore Z = A + (-2i omega /
-  // delta t + omega^2) / v^2. delta t = 2 pi / (omega * steps) => Z = A + (-
-  // i steps /  pi + 1) omega^2 / v^2 Id.
+  // Handle the CML options.
+  PetscCall(PetscOptionsGetScalar(nullptr, nullptr, "-matex_alpha", &ctx->alpha,
+                                  nullptr));
+  PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_periods",
+                               &ctx->periods, nullptr));
+  PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_time_steps_per_period",
+                               &ctx->time_steps_per_period, nullptr));
+
+  // Construct (-i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
   PetscCall(PCGetOperators(pc, &A, nullptr));
   PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->Z_mat));
-  PetscCall(get_shifted_velocity_mat(
-                ctx->Z_mat, ctx->velocity,
-                (-IU * ctx->time_steps_per_period / PETSC_PI + 1.0)) *
-            ctx->omega * ctx->omega);
+  // -omega^2 (1-alpha) + omega^2.
+  shift = ctx->alpha * ctx->omega * ctx->omega;
+  // -i omega / delta_t alpha.
+  delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
+  shift -= IU * ctx->omega / delta_t * ctx->alpha;
+  // Set the shifted matrix.
+  PetscCall(get_shifted_velocity_mat(ctx->Z_mat, ctx->velocity, shift));
+
   // Set up the KSP for Z^{-1} b = u.
   PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->Z_ksp));
   PetscCall(KSPSetOperators(ctx->Z_ksp, ctx->Z_mat, ctx->Z_mat));
@@ -580,52 +592,37 @@ PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
   // Stack variables.
   MatExPre *ctx = nullptr;
   // Use CU here to keep sol as the initial guess for the next iteration.
-  Vec U = nullptr, rhs = nullptr, CU = nullptr, sol = nullptr;
+  Vec rhs = nullptr, CU = nullptr;
   DM dm = nullptr;
-  double time_int_weight = 0.0, delta_t = 0.0;
+  PetscReal delta_t = 0.0;
   auto expim = [&](const double x) { return std::cos(x) + IU * std::sin(x); };
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
   delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
-  time_int_weight = 1.0 / (ctx->periods * ctx->time_steps_per_period);
   dm = ctx->dm;
   PetscCall(VecZeroEntries(out));
   // Create temporary vectors.
-  PetscCall(DMGetGlobalVector(dm, &U));
-  PetscCall(VecZeroEntries(U));
   PetscCall(DMGetGlobalVector(dm, &rhs));
   PetscCall(DMGetGlobalVector(dm, &CU));
-  PetscCall(DMGetGlobalVector(dm, &sol));
-  PetscCall(VecZeroEntries(sol));
   for (unsigned int i = 1; i <= ctx->time_steps_per_period * ctx->periods;
        ++i) {
+    PetscReal t = i * delta_t;
     // rhs -> 2exp(-i omega t^(k+0.5)) f.
     PetscCall(VecCopy(in, rhs));
-    PetscCall(VecScale(rhs, 2.0 * expim(-ctx->omega * (i + 0.5) * delta_t)));
+    PetscCall(VecScale(rhs, expim(-ctx->omega * i * delta_t)));
     // CU -> U / v^2.
-    PetscCall(VecPointwiseDivide(CU, U, ctx->velocity));
+    PetscCall(VecPointwiseDivide(CU, out, ctx->velocity));
     PetscCall(VecPointwiseDivide(CU, CU, ctx->velocity));
-    // rhs -> rhs + -4i omega / detla_t CU.
-    PetscCall(VecAXPY(rhs, -4.0 * IU * ctx->omega / delta_t, CU));
-    // Solve Z sol = rhs.
-    PetscCall(KSPSolve(ctx->Z_ksp, rhs, sol));
-    // U -> sol - U.
-    PetscCall(VecAYPX(U, -1.0, sol));
-    // out -> out + alpha U exp(i omega t^k).
-    if (i < ctx->time_steps_per_period * ctx->periods)
-      PetscCall(
-          VecAXPY(out, expim(ctx->omega * i * delta_t) * time_int_weight, U));
-    else
-      PetscCall(VecAXPY(
-          out, expim(ctx->omega * i * delta_t) * time_int_weight * 0.5, U));
+    // rhs -> rhs + -i omega / detla_t * alpha CU.
+    PetscCall(VecAXPY(rhs, -4.0 * IU * ctx->omega * ctx->alpha / delta_t, CU));
+    // Solve Z U = rhs.
+    PetscCall(KSPSolve(ctx->Z_ksp, rhs, out));
   }
 
   // Destroy the temporary vectors.
   PetscCall(DMRestoreGlobalVector(dm, &CU));
   PetscCall(DMRestoreGlobalVector(dm, &rhs));
-  PetscCall(DMRestoreGlobalVector(dm, &U));
-  PetscCall(DMRestoreGlobalVector(dm, &sol));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }

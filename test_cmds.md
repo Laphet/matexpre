@@ -31,3 +31,22 @@ PML constants: c_x=20.00000, c_y=20.00000.
 Number of iterations=13, relative residual norm=1.74465e-06, source norm=7.08706e+01, residual norm=1.23645e-04.
 
 > mpiexec -n 16 ./main -k 40 -absorber_elems 10 -use_matex -matex_ksp_type preonly -matex_pc_type lu -ksp_monitor_true_residual
+
+# 2025-01-13
+I changed the Schrodinger equation to
+ -i omega dot(U) alpha - omega^2 U (1-alpha) - v^2 Delta U = g exp(-i omega t)
+Set alpha = 1 / omega
+
+mpiexec -n 16 ./main -k 40 -absorber_elems 10 -use_matex -matex_ksp_type preonly -matex_pc_type lu -ksp_monitor_true_residual
+  0 KSP preconditioned resid norm 1.116873375129e-03 true resid norm 7.087061061454e+01 ||r(i)||/||b|| 1.000000000000e+00
+  1 KSP preconditioned resid norm 2.824523098632e-06 true resid norm 3.009122538315e-03 ||r(i)||/||b|| 4.245938495833e-05
+  2 KSP preconditioned resid norm 2.667022405323e-07 true resid norm 8.087113658644e-04 ||r(i)||/||b|| 1.141109634659e-05
+  3 KSP preconditioned resid norm 1.847049654003e-08 true resid norm 1.072438066459e-04 ||r(i)||/||b|| 1.513233845679e-06
+  4 KSP preconditioned resid norm 1.016827239460e-09 true resid norm 9.532868644345e-06 ||r(i)||/||b|| 1.345108862712e-07
+  Linear solve converged due to CONVERGED_RTOL iterations 4
+Interior domain lengths: Lx=1.00000, Ly=1.00000.
+Interior elements: Nx=400, Ny=400.
+Absorber elements: Nx=10, Ny=10.
+PML constants: c_x=20.00000, c_y=20.00000.
+Number of iterations=4, relative residual norm=1.34511e-07, source norm=7.08706e+01, residual norm=9.53287e-06.
+
