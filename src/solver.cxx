@@ -31,6 +31,18 @@ std::complex<double> Solver<DIM>::get_g(const double r, const double omega,
 }
 
 template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
+  // Receive the CML arguments.
+  PetscReal pml_c_uniform = 0.0;
+  PetscBool received_pml_c_uniform = PETSC_FALSE;
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-pml_c_uniform",
+                                &pml_c_uniform, &received_pml_c_uniform));
+  if (received_pml_c_uniform) {
+    PetscCheck(pml_c_uniform >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+               "pml_c must be non-negative, but got %f.", pml_c_uniform);
+    for (unsigned int i = 0; i < DIM; ++i)
+      pml_c[i] = pml_c_uniform;
+  }
+
   for (unsigned int i = 0; i < DIM; ++i) {
     total_dofs[i] = interior_elems[i] + 2 * absorber_elems[i] - 1;
     h[i] = interior_domain_lens[i] / interior_elems[i];
@@ -496,9 +508,7 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   PetscCall(KSPSetOperators(ctx->P_ksp, ctx->P_mat, ctx->P_mat));
   // Set the initial guess to be nonzero, through the input vector.
   // PetscCall(KSPSetInitialGuessNonzero(ctx->P_ksp, PETSC_TRUE));
-  // Set default AMG preconditioner for P.
   PetscCall(KSPGetPC(ctx->P_ksp, &P_pc));
-  PetscCall(PCSetType(P_pc, PCGAMG));
   // Allow CML options.
   PetscCall(PCSetOptionsPrefix(P_pc, "csp_"));
   PetscCall(KSPSetOptionsPrefix(ctx->P_ksp, "csp_"));
@@ -558,16 +568,23 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) { // Stack variables.
   // Handle the CML options.
   PetscCall(PetscOptionsGetScalar(nullptr, nullptr, "-matex_alpha", &ctx->alpha,
                                   nullptr));
+
   PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_periods",
                                &ctx->periods, nullptr));
+  PetscCheck(ctx->periods >= 1, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The periods must be at least 1, but got %d.\n", ctx->periods);
   PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_time_steps_per_period",
                                &ctx->time_steps_per_period, nullptr));
+  PetscCheck(ctx->time_steps_per_period >= 1, PETSC_COMM_WORLD,
+             PETSC_ERR_ARG_OUTOFRANGE,
+             "The time steps per period must be at least 1, but got %d.\n",
+             ctx->time_steps_per_period);
 
   // Construct (-i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
   PetscCall(PCGetOperators(pc, &A, nullptr));
   PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->Z_mat));
   // -omega^2 (1-alpha) + omega^2.
-  shift = ctx->alpha * ctx->omega * ctx->omega;
+  shift = ctx->omega * ctx->omega * ctx->alpha;
   // -i omega / delta_t alpha.
   delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
   shift -= IU * ctx->omega / delta_t * ctx->alpha;
@@ -600,7 +617,9 @@ PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
   delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
-  dm = ctx->dm;
+  // Get the DM through the velocity.
+  PetscCall(VecGetDM(ctx->velocity, &dm));
+
   PetscCall(VecZeroEntries(out));
   // Create temporary vectors.
   PetscCall(DMGetGlobalVector(dm, &rhs));

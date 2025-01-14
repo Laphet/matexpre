@@ -50,3 +50,76 @@ Absorber elements: Nx=10, Ny=10.
 PML constants: c_x=20.00000, c_y=20.00000.
 Number of iterations=4, relative residual norm=1.34511e-07, source norm=7.08706e+01, residual norm=9.53287e-06.
 
+# 2025-01-14
+## Test the Laplace problem eigenvalues.
+mpiexec -n 16 ./main -k 40 -absorber_elems 10 -pc_type gamg
+Interior domain lengths: Lx=1.00000, Ly=1.00000.
+Interior elements: Nx=400, Ny=400.
+Absorber elements: Nx=10, Ny=10.
+PML constants: c_x=20.00000, c_y=20.00000.
+Number of iterations=145, relative residual norm=2.95952e-03, source norm=7.08706e+01, residual norm=2.09743e-01.
+Number of converged eigenpairs: 8
+Eigenvalue 0: 1.27998e+06       +       -1.52261e-01i
+Eigenvalue 1: 1.27995e+06       +       -3.80662e-01i
+Eigenvalue 2: 1.27992e+06       +       -6.09049e-01i
+Eigenvalue 3: 1.27990e+06       +       -7.61326e-01i
+Eigenvalue 4: 1.27987e+06       +       -9.89744e-01i
+Eigenvalue 5: 1.27984e+06       +       -1.29432e+00i
+Eigenvalue 6: 1.27983e+06       +       -1.37042e+00i
+Eigenvalue 7: 1.27981e+06       +       -1.52274e+00i
+
+mpiexec -n 16 ./main -k 40 -absorber_elems 10 -eps_largest_real
+Interior domain lengths: Lx=1.00000, Ly=1.00000.
+Interior elements: Nx=400, Ny=400.
+Absorber elements: Nx=10, Ny=10.
+PML constants: c_x=20.00000, c_y=20.00000.
+Number of iterations=3270, relative residual norm=1.04128e-05, source norm=7.08706e+01, residual norm=7.37959e-04.
+Number of converged eigenpairs: 8
+Eigenvalue 0: 1.27998e+06       +       -1.52261e-01i
+Eigenvalue 1: 1.27995e+06       +       -3.80652e-01i
+Eigenvalue 2: 1.27992e+06       +       -6.09051e-01i
+Eigenvalue 3: 1.27990e+06       +       -7.61321e-01i
+Eigenvalue 4: 1.27987e+06       +       -9.89743e-01i
+Eigenvalue 5: 1.27984e+06       +       -1.29431e+00i
+Eigenvalue 6: 1.27983e+06       +       -1.37042e+00i
+Eigenvalue 7: 1.27981e+06       +       -1.52273e+00i
+
+mpiexec -n 16 ./main -k 40 -absorber_elems 10 -eps_smallest_real
+  Linear solve converged due to CONVERGED_RTOL iterations 3270
+Interior domain lengths: Lx=1.00000, Ly=1.00000.
+Interior elements: Nx=400, Ny=400.
+Absorber elements: Nx=10, Ny=10.
+PML constants: c_x=20.00000, c_y=20.00000.
+Number of iterations=3270, relative residual norm=1.04128e-05, source norm=7.08706e+01, residual norm=7.37959e-04.
+Number of converged eigenpairs: 8
+Eigenvalue 0: -3.22086e+04      +       -1.39906e+05i
+Eigenvalue 1: -3.22086e+04      +       -1.39906e+05i
+Eigenvalue 2: -3.22086e+04      +       -1.39906e+05i
+Eigenvalue 3: -3.22086e+04      +       -1.39906e+05i
+Eigenvalue 4: -1.60954e+04      +       -6.99540e+04i
+Eigenvalue 5: -1.60688e+04      +       -6.99567e+04i
+Eigenvalue 6: -1.60244e+04      +       -6.99612e+04i
+Eigenvalue 7: -1.59622e+04      +       -6.99675e+04i
+
+mpiexec -n 16 ./main -k 40 -absorber_elems 10 -eps_smallest_real -pml_c_uniform 10.0
+  Linear solve converged due to CONVERGED_RTOL iterations 991
+Interior domain lengths: Lx=1.00000, Ly=1.00000.
+Interior elements: Nx=400, Ny=400.
+Absorber elements: Nx=10, Ny=10.
+PML constants: c_x=10.00000, c_y=10.00000.
+Number of iterations=991, relative residual norm=1.04445e-05, source norm=7.08706e+01, residual norm=7.40207e-04.
+Number of converged eigenpairs: 9
+Eigenvalue 0: 1.78699e+01       +       -9.01196e-01i
+Eigenvalue 1: 4.46743e+01       +       -2.25296e+00i
+Eigenvalue 2: 4.46743e+01       +       -2.25296e+00i
+Eigenvalue 3: 7.14787e+01       +       -3.60472e+00i
+Eigenvalue 4: 8.93467e+01       +       -4.50578e+00i
+Eigenvalue 5: 8.93467e+01       +       -4.50578e+00i
+Eigenvalue 6: 1.16151e+02       +       -5.85754e+00i
+Eigenvalue 7: 1.16151e+02       +       -5.85754e+00i
+Eigenvalue 8: 1.51885e+02       +       -7.65948e+00i
+
+It seems that gamg does not actually converge.
+
+
+

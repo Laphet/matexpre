@@ -1,4 +1,3 @@
-#include "petscdm.h"
 #include "petscksp.h"
 #include <complex>
 #include <cstddef>
@@ -110,7 +109,6 @@ struct MatExPre {
   PetscInt time_steps_per_period;
   PetscScalar alpha;
   double omega;
-  DM dm;
   Vec velocity;
   // Z = (-i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
   Mat Z_mat;
