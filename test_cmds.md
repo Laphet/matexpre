@@ -121,5 +121,73 @@ Eigenvalue 8: 1.51885e+02       +       -7.65948e+00i
 
 It seems that gamg does not actually converge.
 
+# 2025-01-15
+Those commands work.
+
+./main -ksp_type fgmres -use_csp -csp_ksp_max_it 2 -csp_pc_type mg
+
+./main -ksp_type fgmres -use_csp -csp_ksp_rtol 1.0e-1 -csp_pc_type mg
+
+./main -ksp_type fgmres -use_csp -csp_pc_type mg  -csp_ksp_rtol 1.0e-1 -csp_mg_levels_0_ksp_type preonly -csp_mg_levels_0_pc_type lu
+
+# 2015-01-16
+Found using asm will improve the performance.
+./main -ksp_max_it 50 -use_csp -csp_ksp_type preonly -csp_pc_type mg  -csp_ksp_monitor_true_residual -csp_shift 0.5 -csp_pc_mg_cycle_type v -pc_mg_levels 3 -csp_mg_levels_pc_type asm -csp_mg_levels_ksp_type bcgs
+  iter 25
+mpiexec -n 16 ./main -k 40 -ksp_monitor_true_residual -use_csp -csp_shift 1.0 -csp_ksp_type bcgs -csp_ksp_rtol 0.001 -csp_pc_type mg -csp_mg_levels_pc_type asm
+  iter 85
+  Average inner mg iterations 2
+mpiexec -n 16 ./main -k 40 -ksp_monitor_true_residual -use_csp -csp_shift 0.5 -csp_ksp_type bcgs -csp_ksp_rtol 0.001 -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual
+  iter 42
+  Average inner mg iterations 2
+mpiexec -n 16 ./main -k 40 -ksp_monitor_true_residual -use_csp -csp_shift 0.2 -csp_ksp_type bcgs -csp_ksp_rtol 0.001 -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual
+  iter 39
+  Average inner mg iterations 3
+mpiexec -n 16 ./main -k 40 -ksp_monitor_true_residual -use_csp -csp_shift 0.1 -csp_ksp_type bcgs -csp_ksp_rtol 0.001 -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual
+  iter 16
+  Average inner mg iterations 8
+mpiexec -n 16 ./main -k 40 -ksp_monitor_true_residual -use_csp -csp_shift 0.05 -csp_ksp_type bcgs -csp_ksp_rtol 0.001 -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual
+  iter 7
+  Average inner mg iterations 15
+mpiexec -n 16 ./main -k 40 -ksp_monitor_true_residual -use_csp -csp_shift 0.0 -csp_ksp_type bcgs -csp_ksp_rtol 0.001 -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual
+  iter 2
+  Average inner mg iterations 15
+mpiexec -n 16 ./main -k 60 -ksp_monitor_true_residual -use_csp -csp_shift 0.0 -csp_ksp_type bcgs -csp_ksp_rtol 0.001 -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual
+  iter 2
+  Average inner mg iterations 18
+mpiexec -n 16 ./main -k 80 -ksp_monitor_true_residual -use_csp -csp_shift 0.0 -csp_ksp_type bcgs -csp_ksp_rtol 0.001 -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual
+  iter 2
+  Average inner mg iterations 35
+mpiexec -n 16 ./main -k 80 -ksp_monitor_true_residual -use_csp -csp_shift 0.1 -csp_ksp_rtol 0.0001 -csp_ksp_max_it 10 -csp_ksp_type bcgs -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual -pc_mg_levels 2 -csp_ksp_converged_reason
+  iter 4
+  Average inner mg iterations 10
+mpiexec -n 16 ./main -k 80 -ksp_monitor_true_residual -use_csp -csp_shift 1.0 -csp_ksp_rtol 0.0001 -csp_ksp_max_it 10 -csp_ksp_type bcgs -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual -pc_mg_levels 3 -csp_ksp_converged_reaso
+  iter 6
+  Average inner mg iterations 4
+mpiexec -n 16 ./main -k 80 -ksp_monitor_true_residual -use_csp -csp_shift 1.0 -csp_ksp_rtol 0.0001 -csp_ksp_max_it 10 -csp_ksp_type bcgs -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual -pc_mg_levels 4 -csp_ksp_converged_reason
+  iter 7
+  Average inner mg iterations 4
+mpiexec -n 16 ./main -k 100 -ksp_monitor_true_residual -use_csp -csp_shift 1.0 -csp_ksp_rtol 0.0001 -csp_ksp_max_it 10 -csp_ksp_type bcgs -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual -pc_mg_levels 4 -csp_ksp_converged_reason
+  iter 8
+  Average inner mg iterations 8
+mpiexec -n 16 ./main -k 120 -ksp_monitor_true_residual -use_csp -csp_shift 1.0 -csp_ksp_rtol 0.0001 -csp_ksp_max_it 10 -csp_ksp_type bcgs -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual -pc_mg_levels 5 -csp_ksp_converged_reason
+  iter 7
+  Average inner mg iterations 6
+mpiexec -n 16 ./main -k 140 -ksp_monitor_true_residual -use_csp -csp_shift 1.0 -csp_ksp_rtol 0.0001 -csp_ksp_max_it 10 -csp_ksp_type bcgs -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual -pc_mg_levels 5 -csp_ksp_converged_reason
+  iter 8
+  Average inner mg iterations 5
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+  

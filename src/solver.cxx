@@ -10,43 +10,47 @@
 #include "petscsystypes.h"
 #include "petscvec.h"
 #include "petscviewerhdf5.h"
+#include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstddef>
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <vector>
 
 template <unsigned int DIM>
 std::complex<double> Solver<DIM>::get_g(const double r, const double omega,
                                         const double c,
-                                        const double absorber_len,
-                                        const double interior_domain_len) {
+                                        const double absorber_len_neg,
+                                        const double interior_domain_len,
+                                        const double absorber_len_pos) {
   if (0.0 <= r && r <= interior_domain_len)
     return std::complex<double>(1.0, 0.0);
-  else {
-    double temp =
-        r < 0.0 ? -r / absorber_len : (r - interior_domain_len) / absorber_len;
-    return 1.0 + IU * (c * temp * temp / absorber_len) / omega;
+  else if (r < 0.0) {
+    double temp = -r / absorber_len_neg;
+    return 1.0 + IU * (c * temp * temp / absorber_len_neg) / omega;
+  } else {
+    double temp = (r - interior_domain_len) / absorber_len_pos;
+    return 1.0 + IU * (c * temp * temp / absorber_len_pos) / omega;
   }
 }
 
+// interior_elems/absorber_elems_neg/absorber_elems_pos/interior_domain_lens
+// should be prepared.
 template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
   // Receive the CML arguments.
-  PetscReal pml_c_uniform = 0.0;
-  PetscBool received_pml_c_uniform = PETSC_FALSE;
-  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-pml_c_uniform",
-                                &pml_c_uniform, &received_pml_c_uniform));
-  if (received_pml_c_uniform) {
-    PetscCheck(pml_c_uniform >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
-               "pml_c must be non-negative, but got %f.", pml_c_uniform);
-    for (unsigned int i = 0; i < DIM; ++i)
-      pml_c[i] = pml_c_uniform;
-  }
+  pml_c = 20.0;
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-pml_c", &pml_c, nullptr));
+  PetscCheck(pml_c >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "pml_c must be non-negative, but got %f.", pml_c);
 
   for (unsigned int i = 0; i < DIM; ++i) {
-    total_dofs[i] = interior_elems[i] + 2 * absorber_elems[i] - 1;
+    total_dofs[i] =
+        interior_elems[i] + absorber_elems_neg[i] + absorber_elems_pos[i] + 1;
     h[i] = interior_domain_lens[i] / interior_elems[i];
-    absorber_lens[i] = h[i] * absorber_elems[i];
+    absorber_lens_neg[i] = h[i] * absorber_elems_neg[i];
+    absorber_lens_pos[i] = h[i] * absorber_elems_pos[i];
   }
 
   PetscFunctionBeginUser;
@@ -61,10 +65,9 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
 
     // Set the coordinates of the DMDA.
     PetscCall(DMDASetUniformCoordinates(
-        dm, -absorber_lens[0] + h[0],
-        interior_domain_lens[0] + absorber_lens[0] - h[0],
-        -absorber_lens[1] + h[1],
-        interior_domain_lens[1] + absorber_lens[1] - h[1], 0.0, 0.0));
+        dm, -absorber_lens_neg[0],
+        interior_domain_lens[0] + absorber_lens_pos[0], -absorber_lens_neg[1],
+        interior_domain_lens[1] + absorber_lens_pos[1], 0.0, 0.0));
   }
 
   if constexpr (DIM == 3) {
@@ -77,12 +80,10 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
 
     // Set the coordinates of the DMDA.
     PetscCall(DMDASetUniformCoordinates(
-        dm, -absorber_lens[0] + h[0],
-        interior_domain_lens[0] + absorber_lens[0] - h[0],
-        -absorber_lens[1] + h[1],
-        interior_domain_lens[1] + absorber_lens[1] - h[1],
-        -absorber_lens[2] + h[2],
-        interior_domain_lens[2] + absorber_lens[2] - h[2]));
+        dm, -absorber_lens_neg[0],
+        interior_domain_lens[0] + absorber_lens_pos[0], -absorber_lens_neg[1],
+        interior_domain_lens[1] + absorber_lens_pos[1], -absorber_lens_neg[2],
+        interior_domain_lens[2] + absorber_lens_pos[2]));
   }
 
   // Get the coordinates.
@@ -111,8 +112,8 @@ PetscErrorCode Solver<DIM>::get_vec_from_func(Vec v, func_ptr f, void *ctx) {
 
     for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
       for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind) {
-        PetscReal x_coord = acoords_2d[y_ind][x_ind].x.real(),
-                  y_coord = acoords_2d[y_ind][x_ind].y.real();
+        double x_coord = acoords_2d[y_ind][x_ind].x.real(),
+               y_coord = acoords_2d[y_ind][x_ind].y.real();
         av_2d[y_ind][x_ind] = f(x_coord, y_coord, 0.0, ctx);
       }
   }
@@ -124,9 +125,9 @@ PetscErrorCode Solver<DIM>::get_vec_from_func(Vec v, func_ptr f, void *ctx) {
     for (PetscInt z_ind = z_start; z_ind < z_start + z_len; ++z_ind)
       for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
         for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind) {
-          PetscReal x_coord = acoords_3d[z_ind][y_ind][x_ind].x.real(),
-                    y_coord = acoords_3d[z_ind][y_ind][x_ind].y.real(),
-                    z_coord = acoords_3d[z_ind][y_ind][x_ind].z.real();
+          double x_coord = acoords_3d[z_ind][y_ind][x_ind].x.real(),
+                 y_coord = acoords_3d[z_ind][y_ind][x_ind].y.real(),
+                 z_coord = acoords_3d[z_ind][y_ind][x_ind].z.real();
           av_3d[z_ind][y_ind][x_ind] = f(x_coord, y_coord, z_coord, ctx);
         }
   }
@@ -157,28 +158,28 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
         double y_mhalf = y - 0.5 * hy, y_phalf = y + 0.5 * hy;
         std::complex<double> temp_a =
             1.0 / (hx * hx) /
-            get_g(x, omega, pml_c[0], absorber_lens[0],
-                  interior_domain_lens[0]) /
-            get_g(x_mhalf, omega, pml_c[0], absorber_lens[0],
-                  interior_domain_lens[0]);
+            (get_g(x, omega, pml_c, absorber_lens_neg[0],
+                   interior_domain_lens[0], absorber_lens_pos[0]) *
+             get_g(x_mhalf, omega, pml_c, absorber_lens_neg[0],
+                   interior_domain_lens[0], absorber_elems_pos[0]));
         std::complex<double> temp_b =
             1.0 / (hx * hx) /
-            get_g(x, omega, pml_c[0], absorber_lens[0],
-                  interior_domain_lens[0]) /
-            get_g(x_phalf, omega, pml_c[0], absorber_lens[0],
-                  interior_domain_lens[0]);
+            (get_g(x, omega, pml_c, absorber_lens_neg[0],
+                   interior_domain_lens[0], absorber_lens_pos[0]) *
+             get_g(x_phalf, omega, pml_c, absorber_lens_pos[0],
+                   interior_domain_lens[0], absorber_lens_pos[0]));
         std::complex<double> temp_c =
             1.0 / (hy * hy) /
-            get_g(y, omega, pml_c[1], absorber_lens[1],
-                  interior_domain_lens[1]) /
-            get_g(y_mhalf, omega, pml_c[1], absorber_lens[1],
-                  interior_domain_lens[1]);
+            (get_g(y, omega, pml_c, absorber_lens_neg[1],
+                   interior_domain_lens[1], absorber_lens_pos[1]) *
+             get_g(y_mhalf, omega, pml_c, absorber_lens_neg[1],
+                   interior_domain_lens[1], absorber_lens_pos[1]));
         std::complex<double> temp_d =
             1.0 / (hy * hy) /
-            get_g(y, omega, pml_c[1], absorber_lens[1],
-                  interior_domain_lens[1]) /
-            get_g(y_phalf, omega, pml_c[1], absorber_lens[1],
-                  interior_domain_lens[1]);
+            (get_g(y, omega, pml_c, absorber_lens_neg[1],
+                   interior_domain_lens[1], absorber_lens_pos[1]) *
+             get_g(y_phalf, omega, pml_c, absorber_lens_neg[1],
+                   interior_domain_lens[1], absorber_lens_pos[1]));
 
         MatStencil row = {0, y_ind, x_ind, 0};
         MatStencil cols[5] = {{0, y_ind, x_ind, 0},
@@ -188,19 +189,20 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
                               {0, y_ind + 1, x_ind, 0}};
         PetscScalar vals[5] = {temp_a + temp_b + temp_c + temp_d, -temp_a,
                                -temp_b, -temp_c, -temp_d};
-
+        // All diagonal elements are inserted, including boundary points.
         PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[0], &vals[0],
                                       INSERT_VALUES));
-        if (x_ind - 1 >= 0)
+        // Points next to the boundary points need special treatments.
+        if (x_ind - 1 >= 1)
           PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[1], &vals[1],
                                         INSERT_VALUES));
-        if (x_ind + 1 < total_dofs[0])
+        if (x_ind + 1 < total_dofs[0] - 1)
           PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[2], &vals[2],
                                         INSERT_VALUES));
-        if (y_ind - 1 >= 0)
+        if (y_ind - 1 >= 1)
           PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[3], &vals[3],
                                         INSERT_VALUES));
-        if (y_ind + 1 < total_dofs[1])
+        if (y_ind + 1 < total_dofs[1] - 1)
           PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[4], &vals[4],
                                         INSERT_VALUES));
       }
@@ -220,40 +222,40 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
           double z_mhalf = z - 0.5 * hz, z_phalf = z + 0.5 * hz;
           std::complex<double> temp_a =
               1.0 / (hx * hx) /
-              get_g(x, omega, pml_c[0], absorber_lens[0],
-                    interior_domain_lens[0]) /
-              get_g(x_mhalf, omega, pml_c[0], absorber_lens[0],
-                    interior_domain_lens[0]);
+              (get_g(x, omega, pml_c, absorber_lens_neg[0],
+                     interior_domain_lens[0], absorber_elems_pos[0]) *
+               get_g(x_mhalf, omega, pml_c, absorber_lens_neg[0],
+                     interior_domain_lens[0], absorber_elems_pos[0]));
           std::complex<double> temp_b =
               1.0 / (hx * hx) /
-              get_g(x, omega, pml_c[0], absorber_lens[0],
-                    interior_domain_lens[0]) /
-              get_g(x_phalf, omega, pml_c[0], absorber_lens[0],
-                    interior_domain_lens[0]);
+              (get_g(x, omega, pml_c, absorber_lens_neg[0],
+                     interior_domain_lens[0], absorber_lens_pos[0]) *
+               get_g(x_phalf, omega, pml_c, absorber_lens_neg[0],
+                     interior_domain_lens[0], absorber_lens_pos[0]));
           std::complex<double> temp_c =
               1.0 / (hy * hy) /
-              get_g(y, omega, pml_c[1], absorber_lens[1],
-                    interior_domain_lens[1]) /
-              get_g(y_mhalf, omega, pml_c[1], absorber_lens[1],
-                    interior_domain_lens[1]);
+              (get_g(y, omega, pml_c, absorber_lens_neg[1],
+                     interior_domain_lens[1], absorber_lens_pos[1]) *
+               get_g(y_mhalf, omega, pml_c, absorber_lens_neg[1],
+                     interior_domain_lens[1], absorber_lens_pos[1]));
           std::complex<double> temp_d =
               1.0 / (hy * hy) /
-              get_g(y, omega, pml_c[1], absorber_lens[1],
-                    interior_domain_lens[1]) /
-              get_g(y_phalf, omega, pml_c[1], absorber_lens[1],
-                    interior_domain_lens[1]);
+              (get_g(y, omega, pml_c, absorber_lens_neg[1],
+                     interior_domain_lens[1], absorber_lens_pos[1]) *
+               get_g(y_phalf, omega, pml_c, absorber_lens_neg[1],
+                     interior_domain_lens[1], absorber_lens_pos[1]));
           std::complex<double> temp_e =
               1.0 / (hz * hz) /
-              get_g(z, omega, pml_c[2], absorber_lens[2],
-                    interior_domain_lens[2]) /
-              get_g(z_mhalf, omega, pml_c[2], absorber_lens[2],
-                    interior_domain_lens[2]);
+              (get_g(z, omega, pml_c, absorber_lens_neg[2],
+                     interior_domain_lens[2], absorber_lens_pos[2]) *
+               get_g(z_mhalf, omega, pml_c, absorber_lens_neg[2],
+                     interior_domain_lens[2], absorber_lens_pos[2]));
           std::complex<double> temp_f =
               1.0 / (hz * hz) /
-              get_g(z, omega, pml_c[2], absorber_lens[2],
-                    interior_domain_lens[2]) /
-              get_g(z_phalf, omega, pml_c[2], absorber_lens[2],
-                    interior_domain_lens[2]);
+              (get_g(z, omega, pml_c, absorber_lens_neg[2],
+                     interior_domain_lens[2], absorber_lens_pos[2]) *
+               get_g(z_phalf, omega, pml_c, absorber_lens_neg[2],
+                     interior_domain_lens[2], absorber_lens_pos[2]));
 
           MatStencil row = {z_ind, y_ind, x_ind, 0};
           MatStencil cols[7] = {
@@ -272,22 +274,22 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
 
           PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[0], &vals[0],
                                         INSERT_VALUES));
-          if (x_ind - 1 >= 0)
+          if (x_ind - 1 >= 1)
             PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[1], &vals[1],
                                           INSERT_VALUES));
-          if (x_ind + 1 < total_dofs[0])
+          if (x_ind + 1 < total_dofs[0] - 1)
             PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[2], &vals[2],
                                           INSERT_VALUES));
-          if (y_ind - 1 >= 0)
+          if (y_ind - 1 >= 1)
             PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[3], &vals[3],
                                           INSERT_VALUES));
-          if (y_ind + 1 < total_dofs[1])
+          if (y_ind + 1 < total_dofs[1] - 1)
             PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[4], &vals[4],
                                           INSERT_VALUES));
-          if (z_ind - 1 >= 0)
+          if (z_ind - 1 >= 1)
             PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[5], &vals[5],
                                           INSERT_VALUES));
-          if (z_ind + 1 < total_dofs[2])
+          if (z_ind + 1 < total_dofs[2] - 1)
             PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[6], &vals[6],
                                           INSERT_VALUES));
         }
@@ -313,13 +315,25 @@ Solver<DIM>::Solver(const int uniform_interior_elems,
   for (unsigned int i = 0; i < DIM; ++i) {
     interior_domain_lens[i] = 1.0;
     interior_elems[i] = uniform_interior_elems;
-    absorber_elems[i] = uniform_absorber_elems;
-    pml_c[i] = 20.0;
+    absorber_elems_neg[i] = uniform_absorber_elems;
+    absorber_elems_pos[i] = uniform_absorber_elems;
   }
   PetscCallAbort(PETSC_COMM_SELF, _setup());
 }
 
-template <unsigned int DIM> PetscErrorCode Solver<DIM>::print_info() {
+template <unsigned int DIM>
+Solver<DIM>::Solver(const int levels, const double ratio) {
+  for (unsigned int i = 0; i < DIM; ++i) {
+    interior_domain_lens[i] = 1.0;
+    interior_elems[i] = std::floor((1 << levels) * ratio / 2) * 2;
+    absorber_elems_neg[i] = ((1 << levels) - interior_elems[i]) / 2;
+    absorber_elems_pos[i] = ((1 << levels) - interior_elems[i]) / 2;
+  }
+  PetscCallAbort(PETSC_COMM_SELF, _setup());
+}
+
+template <unsigned int DIM>
+PetscErrorCode Solver<DIM>::print_info(const double omega) {
   PetscFunctionBeginUser;
 
   PetscCall(PetscPrintf(PETSC_COMM_WORLD,
@@ -340,21 +354,20 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::print_info() {
     PetscCall(PetscPrintf(PETSC_COMM_WORLD, ".\n"));
   }
 
-  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Absorber elements: Nx=%d, Ny=%d",
-                        absorber_elems[0], absorber_elems[1]));
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                        "Absorber elements: Nx=(%d, %d), Ny=(%d, %d)",
+                        absorber_elems_neg[0], absorber_elems_pos[0],
+                        absorber_elems_neg[1], absorber_elems_pos[1]));
   if constexpr (DIM == 3) {
-    PetscCall(PetscPrintf(PETSC_COMM_WORLD, ", Nz=%d.\n", absorber_elems[2]));
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD, ", Nz=(%d, %d).\n",
+                          absorber_elems_neg[2], absorber_elems_pos[2]));
   } else {
     PetscCall(PetscPrintf(PETSC_COMM_WORLD, ".\n"));
   }
 
-  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "PML constants: c_x=%.5f, c_y=%.5f",
-                        pml_c[0], pml_c[1]));
-  if constexpr (DIM == 3) {
-    PetscCall(PetscPrintf(PETSC_COMM_WORLD, ", c_z=%.5f.\n", pml_c[2]));
-  } else {
-    PetscCall(PetscPrintf(PETSC_COMM_WORLD, ".\n"));
-  }
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "PML constants: c=%.5f.\n", pml_c));
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Omega: 2 Pi x %.5f=%.5f.\n",
+                        omega / (2.0 * PETSC_PI), omega));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -382,10 +395,11 @@ PetscErrorCode Solver<DIM>::save_xdmf_hdf5(Vec v,
   std::string t_GRID_SPACING;
 
   for (unsigned int i = 0; i < DIM; ++i) {
-    t_ADITIONAL_INFO += std::to_string(absorber_elems[i] - 1) + " " +
-                        std::to_string(absorber_elems[i] + interior_elems[i]);
+    t_ADITIONAL_INFO +=
+        std::to_string(absorber_elems_neg[i] - 1) + " " +
+        std::to_string(absorber_elems_neg[i] + interior_elems[i]);
     t_GRID_DIMENSIONS += std::to_string(total_dofs[i]);
-    t_GRID_ORIGIN += std::to_string(static_cast<float>(-absorber_lens[i]));
+    t_GRID_ORIGIN += std::to_string(static_cast<float>(-absorber_lens_neg[i]));
     t_GRID_SPACING += std::to_string(static_cast<float>(h[i]));
     if (i != DIM - 1) {
       t_ADITIONAL_INFO += " ";
@@ -441,6 +455,71 @@ PetscErrorCode Solver<DIM>::save_xdmf_hdf5(Vec v,
   }
   // xdmf_file.close();
 
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+template <unsigned int DIM>
+PetscErrorCode Solver<DIM>::get_zeroed_boundary_vec(Vec v) {
+  // Stack variables.
+  void *av = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(DMDAVecGetArray(dm, v, &av));
+  if constexpr (DIM == 2) {
+    PetscScalar **av_2d = reinterpret_cast<PetscScalar **>(av);
+    if (x_start == 0) {
+      for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+        av_2d[y_ind][0] = 0.0;
+    }
+    if (x_start + x_len == total_dofs[0]) {
+      for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+        av_2d[y_ind][total_dofs[0] - 1] = 0.0;
+    }
+    if (y_start == 0) {
+      for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind)
+        av_2d[0][x_ind] = 0.0;
+    }
+    if (y_start + y_len == total_dofs[1]) {
+      for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind)
+        av_2d[total_dofs[1] - 1][x_ind] = 0.0;
+    }
+  }
+
+  if constexpr (DIM == 3) {
+    PetscScalar ***av_3d = reinterpret_cast<PetscScalar ***>(av);
+    if (x_start == 0) {
+      for (PetscInt z_ind = z_start; z_ind < z_start + z_len; ++z_ind)
+        for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+          av_3d[z_ind][y_ind][0] = 0.0;
+    }
+    if (x_start + x_len == total_dofs[0]) {
+      for (PetscInt z_ind = z_start; z_ind < z_start + z_len; ++z_ind)
+        for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+          av_3d[z_ind][y_ind][total_dofs[0] - 1] = 0.0;
+    }
+    if (y_start == 0) {
+      for (PetscInt z_ind = z_start; z_ind < z_start + z_len; ++z_ind)
+        for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind)
+          av_3d[z_ind][0][x_ind] = 0.0;
+    }
+    if (y_start + y_len == total_dofs[1]) {
+      for (PetscInt z_ind = z_start; z_ind < z_start + z_len; ++z_ind)
+        for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind)
+          av_3d[z_ind][total_dofs[1] - 1][x_ind] = 0.0;
+    }
+    if (z_start == 0) {
+      for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+        for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind)
+          av_3d[0][y_ind][x_ind] = 0.0;
+    }
+    if (z_start + z_len == total_dofs[2]) {
+      for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+        for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind)
+          av_3d[total_dofs[2] - 1][y_ind][x_ind] = 0.0;
+    }
+  }
+
+  PetscCall(DMDAVecRestoreArray(dm, v, &av));
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
@@ -506,13 +585,22 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   // Set up the KSP for P^{-1} b = u.
   PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->P_ksp));
   PetscCall(KSPSetOperators(ctx->P_ksp, ctx->P_mat, ctx->P_mat));
-  // Set the initial guess to be nonzero, through the input vector.
-  // PetscCall(KSPSetInitialGuessNonzero(ctx->P_ksp, PETSC_TRUE));
   PetscCall(KSPGetPC(ctx->P_ksp, &P_pc));
+  // Set default KSP type.
+  PetscCall(KSPSetType(ctx->P_ksp, KSPBCGS));
   // Allow CML options.
   PetscCall(PCSetOptionsPrefix(P_pc, "csp_"));
   PetscCall(KSPSetOptionsPrefix(ctx->P_ksp, "csp_"));
   PetscCall(KSPSetFromOptions(ctx->P_ksp));
+  // Set the PCMG for the P_ksp.
+  PetscBool use_pcmg = PETSC_FALSE;
+  PetscCall(PetscObjectTypeCompare(reinterpret_cast<PetscObject>(P_pc), PCMG,
+                                   &use_pcmg));
+  DM dm = nullptr;
+  PetscCall(VecGetDM(ctx->velocity, &dm));
+  if (use_pcmg) {
+    PetscCall(PCMGSetupViaCoarsen(P_pc, dm));
+  }
   // KSPSetUp setup will call PCSetUp.
   PetscCall(KSPSetUp(ctx->P_ksp));
 
@@ -556,12 +644,11 @@ PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx) {
 }
 
 // MatExPre.
-extern PetscErrorCode PCSetUp_MatExPre(PC pc) { // Stack variables.
+extern PetscErrorCode PCSetUp_MatExPre(PC pc) {
+  // Stack variables.
   MatExPre *ctx = nullptr;
   Mat A = nullptr;
   PC Z_pc = nullptr;
-  PetscScalar shift = 0.0;
-  PetscReal delta_t = 0.0;
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
@@ -569,10 +656,10 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) { // Stack variables.
   PetscCall(PetscOptionsGetScalar(nullptr, nullptr, "-matex_alpha", &ctx->alpha,
                                   nullptr));
 
-  PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_periods",
-                               &ctx->periods, nullptr));
-  PetscCheck(ctx->periods >= 1, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
-             "The periods must be at least 1, but got %d.\n", ctx->periods);
+  PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_steps", &ctx->steps,
+                               nullptr));
+  PetscCheck(ctx->steps >= 1, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The steps must be at least 1, but got %d.\n", ctx->steps);
   PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_time_steps_per_period",
                                &ctx->time_steps_per_period, nullptr));
   PetscCheck(ctx->time_steps_per_period >= 1, PETSC_COMM_WORLD,
@@ -580,14 +667,14 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) { // Stack variables.
              "The time steps per period must be at least 1, but got %d.\n",
              ctx->time_steps_per_period);
 
-  // Construct (-i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
+  // Construct (-2i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
   PetscCall(PCGetOperators(pc, &A, nullptr));
   PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->Z_mat));
   // -omega^2 (1-alpha) + omega^2.
-  shift = ctx->omega * ctx->omega * ctx->alpha;
+  PetscScalar shift = ctx->omega * ctx->omega * ctx->alpha;
   // -i omega / delta_t alpha.
-  delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
-  shift -= IU * ctx->omega / delta_t * ctx->alpha;
+  double delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
+  shift -= 2.0 * IU * ctx->omega / delta_t * ctx->alpha;
   // Set the shifted matrix.
   PetscCall(get_shifted_velocity_mat(ctx->Z_mat, ctx->velocity, shift));
 
@@ -595,10 +682,22 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) { // Stack variables.
   PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->Z_ksp));
   PetscCall(KSPSetOperators(ctx->Z_ksp, ctx->Z_mat, ctx->Z_mat));
   PetscCall(KSPGetPC(ctx->Z_ksp, &Z_pc));
+  // Set default KSP type.
+  PetscCall(KSPSetType(ctx->Z_ksp, KSPBCGS));
+  KSPSetInitialGuessNonzero(ctx->Z_ksp, PETSC_TRUE);
   // Allow CML options.
   PetscCall(PCSetOptionsPrefix(Z_pc, "matex_"));
   PetscCall(KSPSetOptionsPrefix(ctx->Z_ksp, "matex_"));
   PetscCall(KSPSetFromOptions(ctx->Z_ksp));
+  // Set the PCMG for the Z_ksp.
+  PetscBool use_pcmg = PETSC_FALSE;
+  PetscCall(PetscObjectTypeCompare(reinterpret_cast<PetscObject>(Z_pc), PCMG,
+                                   &use_pcmg));
+  DM dm = nullptr;
+  PetscCall(VecGetDM(ctx->velocity, &dm));
+  if (use_pcmg) {
+    PetscCall(PCMGSetupViaCoarsen(Z_pc, dm));
+  }
   // KSPSetUp setup will call PCSetUp.
   PetscCall(KSPSetUp(ctx->Z_ksp));
 
@@ -609,14 +708,13 @@ PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
   // Stack variables.
   MatExPre *ctx = nullptr;
   // Use CU here to keep sol as the initial guess for the next iteration.
-  Vec rhs = nullptr, CU = nullptr;
+  Vec rhs = nullptr, CU = nullptr, sol = nullptr;
   DM dm = nullptr;
-  PetscReal delta_t = 0.0;
   auto expim = [&](const double x) { return std::cos(x) + IU * std::sin(x); };
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
+  double delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
   // Get the DM through the velocity.
   PetscCall(VecGetDM(ctx->velocity, &dm));
 
@@ -624,22 +722,29 @@ PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
   // Create temporary vectors.
   PetscCall(DMGetGlobalVector(dm, &rhs));
   PetscCall(DMGetGlobalVector(dm, &CU));
-  for (unsigned int i = 1; i <= ctx->time_steps_per_period * ctx->periods;
-       ++i) {
-    PetscReal t = i * delta_t;
-    // rhs -> 2exp(-i omega t^(k+0.5)) f.
-    PetscCall(VecCopy(in, rhs));
-    PetscCall(VecScale(rhs, expim(-ctx->omega * i * delta_t)));
-    // CU -> U / v^2.
+  PetscCall(DMGetGlobalVector(dm, &sol));
+  PetscCall(VecZeroEntries(sol));
+  for (unsigned int i = 1; i <= ctx->steps; ++i) {
+    // CU -> out(U) / v^2.
     PetscCall(VecPointwiseDivide(CU, out, ctx->velocity));
     PetscCall(VecPointwiseDivide(CU, CU, ctx->velocity));
-    // rhs -> rhs + -i omega / detla_t * alpha CU.
-    PetscCall(VecAXPY(rhs, -4.0 * IU * ctx->omega * ctx->alpha / delta_t, CU));
-    // Solve Z U = rhs.
-    PetscCall(KSPSolve(ctx->Z_ksp, rhs, out));
+    // rhs -> in(f)
+    PetscCall(VecCopy(in, rhs));
+    // rhs -> -2i omega / delta_t * alpha * CU + exp(-i omega t^(k+0.5)) rhs.
+    double t = (i + 0.5) * delta_t;
+    PetscCall(VecAXPBY(rhs, -2.0 * IU * ctx->omega / delta_t * ctx->alpha,
+                       expim(-ctx->omega * i * delta_t), CU));
+    // Solve Z sol = rhs, sol ~ (U^{k+1}+U^k) / 2
+    PetscCall(KSPSolve(ctx->Z_ksp, rhs, sol));
+    // out(U) = -out + 2 sol
+    PetscCall(VecAXPBY(out, 2.0, -1.0, sol));
   }
+  // out = out exp(i omega T)
+  double T = ctx->steps * delta_t;
+  PetscCall(VecScale(out, expim(ctx->omega * T)));
 
   // Destroy the temporary vectors.
+  PetscCall(DMRestoreGlobalVector(dm, &sol));
   PetscCall(DMRestoreGlobalVector(dm, &CU));
   PetscCall(DMRestoreGlobalVector(dm, &rhs));
 
@@ -667,6 +772,48 @@ PetscErrorCode PCShell_MatExPre(PC pc, MatExPre *ctx) {
   PetscCall(PCShellSetApply(pc, PCApply_MatExPre));
   PetscCall(PCShellSetSetUp(pc, PCSetUp_MatExPre));
   PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPre));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
+  // Stack variables.
+  std::vector<DM> da_hierarchy;
+
+  PetscFunctionBeginUser;
+  PetscInt nlevels = 2;
+  PetscCall(PetscOptionsGetInt(NULL, NULL, "-pc_mg_levels", &nlevels, nullptr));
+  PetscCheck(nlevels >= 2, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The number of levels must be at least 2, but got %d.\n", nlevels);
+
+  // Finest is at 0.
+  da_hierarchy.resize(nlevels);
+  da_hierarchy[0] = da_finest;
+  PetscCall(DMCoarsenHierarchy(da_hierarchy[0], nlevels - 1, &da_hierarchy[1]));
+
+  PetscCall(PCMGSetLevels(pc, nlevels, nullptr));
+  PetscCall(PCMGSetType(pc, PC_MG_MULTIPLICATIVE));
+  PetscCall(PCMGSetGalerkin(pc, PC_MG_GALERKIN_PMAT));
+
+  // Reverse the da_hierarchy, now the finest is at the end.
+  std::reverse(da_hierarchy.begin(), da_hierarchy.end());
+
+  for (auto k = 1; k < nlevels; ++k) {
+    Mat R = nullptr;
+    PetscCall(
+        DMCreateInterpolation(da_hierarchy[k - 1], da_hierarchy[k], &R, NULL));
+    PetscCall(PCMGSetInterpolation(pc, k, R));
+    PetscCall(MatDestroy(&R));
+  }
+
+  // Do not destroy the finest level.
+  for (auto k = 0; k < nlevels - 1; ++k)
+    PetscCall(DMDestroy(&da_hierarchy[k]));
+
+  // Tests.
+  // PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+  //                       "PCMGSetupViaCoarsen is called with levels=%d.\n",
+  //                       nlevels));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }

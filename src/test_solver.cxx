@@ -18,16 +18,17 @@ int main(int argc, char **argv) {
 
     PetscInt pts_per_wavelen = 10;
     PetscInt k = 20;
-    PetscInt absorber_elems = 10;
-    double omega = -1.0;
+    // PetscInt absorber_elems = 10;
+    double omega = -1.0, ratio = 0.92;
     PetscBool use_csp = PETSC_FALSE, use_matex = PETSC_FALSE;
 
     // Get options from command line.
     PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pts_per_wavelen",
                                  &pts_per_wavelen, nullptr));
     PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-k", &k, nullptr));
-    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-absorber_elems",
-                                 &absorber_elems, nullptr));
+    // PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-absorber_elems",
+    //                              &absorber_elems, nullptr));
+    PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-ratio", &ratio, nullptr));
     PetscCall(
         PetscOptionsGetBool(nullptr, nullptr, "-use_csp", &use_csp, nullptr));
     PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-use_matex", &use_matex,
@@ -38,8 +39,11 @@ int main(int argc, char **argv) {
     // Test omega=0.
     // omega = 0.0;
 
+    PetscInt levels = std::ceil(std::log2(pts_per_wavelen * k / ratio));
+
     // "solver" will be automatically cleaned up after the scope.
-    Solver<2> solver(pts_per_wavelen * k, absorber_elems);
+    // Solver<2> solver(pts_per_wavelen * k, absorber_elems);
+    Solver<2> solver(levels, ratio);
 
     // Create velocity vector.
     PetscCall(DMCreateGlobalVector(solver.dm, &velocity));
@@ -67,6 +71,8 @@ int main(int argc, char **argv) {
     // Solve the system.
     PetscCall(KSPCreate(PETSC_COMM_WORLD, &ksp));
     PetscCall(KSPSetOperators(ksp, A, A));
+    // Set the default ksp solver.
+    PetscCall(KSPSetType(ksp, KSPFGMRES));
     PetscCall(KSPSetFromOptions(ksp));
     // PetscCall(KSPSetNormType(ksp, KSP_NORM_UNPRECONDITIONED));
     if (use_csp) {
@@ -82,11 +88,11 @@ int main(int argc, char **argv) {
       PetscCall(PCShell_MatExPre(pc, &matex_ctx));
     }
     PetscCall(KSPSetUp(ksp));
+    // Get info.
+    PetscCall(solver.print_info(omega));
     PetscCall(KSPSolve(ksp, source, u));
     PetscCall(KSPConvergedReasonView(ksp, nullptr));
 
-    // Get info.
-    PetscCall(solver.print_info());
     PetscInt its = -1;
     PetscCall(KSPGetIterationNumber(ksp, &its));
     // PETSc convergence test should be ||P^{-1}(b - A x)|| < rtol ||P^{-1}b||,

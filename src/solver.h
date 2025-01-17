@@ -18,22 +18,26 @@ using func_ptr = std::complex<double> (*)(const double, const double,
 template <unsigned int DIM> class Solver {
 private:
   // The size of the domain in each direction (0, Lx)x(0, Ly)x(0, Lz).
-  PetscReal interior_domain_lens[DIM];
+  double interior_domain_lens[DIM];
   // The Number of cells in the interior domain, which we care about.
   PetscInt interior_elems[DIM];
-  // The number of cells of in absorbing layers in each direction,
-  PetscInt absorber_elems[DIM];
+  // The number of cells of in absorbing layers in each negative direction.
+  PetscInt absorber_elems_neg[DIM];
+  // The number of cells of in absorbing layers in each positive direction.
+  PetscInt absorber_elems_pos[DIM];
 
-  // total_dof = interior_elems + 2*absorber_elems - 1.
+  // The total physical points in each direction.
+  // We treat Dirichlet boundary conditions as a dof.
+  // total_dof = interior_elems + absorber_elems_neg + absorber_elems_pos + 1.
   PetscInt total_dofs[DIM];
   // The cell sizes in each direction.
-  PetscReal h[DIM];
+  double h[DIM];
   // The width of the absorbing layer in each direction.
-  PetscReal absorber_lens[DIM];
+  double absorber_lens_neg[DIM], absorber_lens_pos[DIM];
 
   // dz = (1 + i sigma(x) / omega) dx.
   // sigma(x) = c (ratio)^2 / absorber_len.
-  PetscReal pml_c[DIM];
+  double pml_c;
 
   // Coordinate DMDA.
   DM cdm;
@@ -44,8 +48,10 @@ private:
   PetscInt x_len, y_len, z_len;
 
   static std::complex<double> get_g(const double r, const double omega,
-                                    const double c, const double absorber_len,
-                                    const double interior_domain_len);
+                                    const double c,
+                                    const double absorber_len_neg,
+                                    const double interior_domain_len,
+                                    const double absorber_len_pos);
 
   PetscErrorCode _setup();
 
@@ -57,7 +63,9 @@ public:
 
   PetscErrorCode get_laplace_mat(Mat A, const double omega);
 
-  PetscErrorCode print_info();
+  PetscErrorCode print_info(const double omega);
+
+  PetscErrorCode get_zeroed_boundary_vec(Vec v);
 
   // The .hdf5 and .xmf files will be save in the DATA_FOLDERPATH.
   // The dataset of the Petsc vector will be saved in the location
@@ -68,6 +76,11 @@ public:
                                 const char *hdf5_groupname);
 
   Solver(const int uniform_interior_elems, const int uniform_absorber_elems);
+
+  // The total_dofs = 2^levels + 1.
+  // The interior_elems ~ total_dofs * ratio (should be an even number).
+  // For testing multigrid.
+  Solver(const int levels, const double ratio);
 
   ~Solver();
 };
@@ -103,14 +116,17 @@ extern PetscErrorCode PCDestroy_ComplexShiftPre(PC pc);
 PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx);
 
 // Schrodinger time-domain preconditioner.
-// -i omega dot(U) alpha - omega^2 U (1-alpha) - v^2 Delta U = g
+// -i omega dot(U) alpha - omega^2 U (1-alpha) - v^2 Delta U
+//      = g exp(-i omega t).
+// Crank-Nicolson scheme.
 struct MatExPre {
-  PetscInt periods;
+  // T = steps * 2 Pi / omega / time_steps_per_period.
+  PetscInt steps;
   PetscInt time_steps_per_period;
   PetscScalar alpha;
   double omega;
   Vec velocity;
-  // Z = (-i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
+  // Z = (-2i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
   Mat Z_mat;
   KSP Z_ksp;
 };
@@ -118,3 +134,6 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc);
 extern PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out);
 extern PetscErrorCode PCDestroy_MatExPre(PC pc);
 PetscErrorCode PCShell_MatExPre(PC pc, MatExPre *ctx);
+
+// Borrowed from https://petsc.org/main/src/ksp/ksp/tutorials/ex42.c.html.
+PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest);

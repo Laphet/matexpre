@@ -1,9 +1,7 @@
 #include "petsc.h"
+#include "petscdm.h"
 #include "petscerror.h"
-#include "petsclog.h"
 #include "petscsys.h"
-#include <iterator>
-#include <sstream>
 #include <vector>
 
 int main(int argc, char **argv) {
@@ -18,9 +16,9 @@ int main(int argc, char **argv) {
 
   // PetscCall(DMSetUp(dm));
 
-  PetscInt mpi_size = -1, mpi_rank = -1;
-  PetscCallMPI(MPI_Comm_size(PETSC_COMM_WORLD, &mpi_size));
-  PetscCallMPI(MPI_Comm_rank(PETSC_COMM_WORLD, &mpi_rank));
+  // PetscInt mpi_size = -1, mpi_rank = -1;
+  // PetscCallMPI(MPI_Comm_size(PETSC_COMM_WORLD, &mpi_size));
+  // PetscCallMPI(MPI_Comm_rank(PETSC_COMM_WORLD, &mpi_rank));
 
   // PetscInt local_n0 = ny / mpi_size + (ny % mpi_size > mpi_rank ? 1 : 0);
   // PetscInt local_0_start =
@@ -94,19 +92,55 @@ int main(int argc, char **argv) {
   // PetscCall(ISDestroy(&fftw_patch_is));
   // PetscCall(DMDestroy(&dm));
 
-  std::vector<PetscInt> send_buf(mpi_size, 0);
-  std::vector<PetscInt> recv_buf(mpi_size, -1);
-  // for (auto i = 0; i < mpi_size; ++i)
-  //   send_buf[i] = i;
-  send_buf[mpi_rank] = mpi_rank * mpi_rank;
-  PetscCallMPI(MPI_Allgather(&send_buf[mpi_rank], 1, MPIU_INT, &recv_buf[0], 1,
-                             MPIU_INT, PETSC_COMM_WORLD));
-  PetscCallMPI(MPI_Barrier(PETSC_COMM_WORLD));
+  // std::vector<PetscInt> send_buf(mpi_size, 0);
+  // std::vector<PetscInt> recv_buf(mpi_size, -1);
+  // // for (auto i = 0; i < mpi_size; ++i)
+  // //   send_buf[i] = i;
+  // send_buf[mpi_rank] = mpi_rank * mpi_rank;
+  // PetscCallMPI(MPI_Allgather(&send_buf[mpi_rank], 1, MPIU_INT, &recv_buf[0],
+  // 1,
+  //                            MPIU_INT, PETSC_COMM_WORLD));
+  // PetscCallMPI(MPI_Barrier(PETSC_COMM_WORLD));
 
-  std::ostringstream oss;
-  std::copy(recv_buf.begin(), recv_buf.end(),
-            std::ostream_iterator<int>(oss, " "));
-  PetscPrintf(PETSC_COMM_SELF, "rank=%d, %s\n", mpi_rank, oss.str().c_str());
+  // std::ostringstream oss;
+  // std::copy(recv_buf.begin(), recv_buf.end(),
+  //           std::ostream_iterator<int>(oss, " "));
+  // PetscPrintf(PETSC_COMM_SELF, "rank=%d, %s\n", mpi_rank, oss.str().c_str());
+
+  // Test the Petsc DMCoarsenHierarchy.
+  PetscInt nx = 61, ny = 107, levels = 4;
+  // PetscCall(DMDACreate2d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE,
+  // DM_BOUNDARY_NONE,
+  //                        DMDA_STENCIL_STAR, nx, ny, PETSC_DECIDE,
+  //                        PETSC_DECIDE, 1, 1, nullptr, nullptr, &dm));
+
+  // Finest dm_hierarchy[0].
+  std::vector<DM> dm_hierarchy(levels, nullptr);
+  PetscCall(DMDACreate1d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, nx, 1, 1, nullptr,
+                         &dm_hierarchy[0]));
+  PetscCall(DMSetFromOptions(dm_hierarchy[0]));
+  PetscCall(DMSetUp(dm_hierarchy[0]));
+
+  PetscCall(DMCoarsenHierarchy(dm_hierarchy[0], levels - 1, &dm_hierarchy[1]));
+
+  for (auto i = 0; i < levels; ++i) {
+    PetscCall(DMView(dm_hierarchy[i], PETSC_VIEWER_STDOUT_SELF));
+  }
+
+  for (auto i = 0; i + 1 < levels; ++i) {
+    // PetscPrintf(PETSC_COMM_SELF, "level=%d\n", i);
+    // PetscCall(DMView(dm_hierarchy[i], PETSC_VIEWER_STDOUT_SELF));
+
+    Mat R = nullptr;
+    PetscCall(DMCreateInterpolation(dm_hierarchy[i + 1], dm_hierarchy[i], &R,
+                                    nullptr));
+    PetscCall(MatView(R, PETSC_VIEWER_STDOUT_SELF));
+    PetscCall(MatDestroy(&R));
+  }
+
+  for (auto i = 0; i < levels; ++i) {
+    PetscCall(DMDestroy(&dm_hierarchy[i]));
+  }
 
   PetscCall(PetscFinalize());
   return 0;

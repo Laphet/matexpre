@@ -4,8 +4,9 @@ add_executable(main
 # get_mat_eigenvals.cxx 
 # matexpre.cxx
 solver.cxx 
-# test_solver.cxx
-test_pml_laplace_solver.cxx
+test_solver.cxx
+# test_pml_laplace_solver.cxx
+# test_petsc_dmda.cxx
 )
 
 # Manually set the include and library directories for SLEPc and FFTW3.

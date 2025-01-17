@@ -10,7 +10,7 @@ int main(int argc, char **argv) {
   {
     // Data need to be cleaned up.
     Vec velocity = nullptr, source = nullptr, u = nullptr, residual = nullptr;
-    Mat A = nullptr, v_minus2_A = nullptr;
+    Mat A = nullptr, v_2_A = nullptr;
     KSP ksp = nullptr;
     EPS eps = nullptr;
 
@@ -76,11 +76,10 @@ int main(int argc, char **argv) {
                           residual_norm));
 
     // Study the eigenvalues.
-    PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &v_minus2_A));
+    PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &v_2_A));
     // Borrow the residual vector.
     PetscCall(VecPointwiseMult(residual, velocity, velocity));
-    PetscCall(VecReciprocal(residual));
-    PetscCall(MatDiagonalScale(v_minus2_A, residual, nullptr));
+    PetscCall(MatDiagonalScale(v_2_A, residual, nullptr));
     // Slepc stuff.
     PetscCall(EPSCreate(PETSC_COMM_WORLD, &eps));
     PetscCall(EPSSetOperators(eps, A, nullptr));
