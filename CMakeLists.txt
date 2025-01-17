@@ -15,7 +15,7 @@
 cmake_minimum_required(VERSION 3.1.0)
 
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-set(CMAKE_CXX_STANDARD_REQUIRED 17 )
+set(CMAKE_CXX_STANDARD_REQUIRED 17)
 
 
 # Set verbose output during configuration
@@ -59,6 +59,7 @@ if (USE_SLEPC)
 # Check SLEPc
   set(SLEPC $ENV{SLEPC_DIR}/$ENV{SLEPC_ARCH})
   set(ENV{PKG_CONFIG_PATH} ${SLEPC}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH})
+  # Importing slepc will automatically set variables for petsc. 
   pkg_check_modules(SLEPC REQUIRED SLEPc)
   # if (SLEPC_FOUND)
   #   message("SLEPC_LIBRARIES: ${SLEPC_LIBRARIES}")
@@ -90,20 +91,21 @@ else ()
 endif (USE_SLEPC)
 
 # Check gsl
-find_package(GSL REQUIRED)
+# find_package(GSL REQUIRED)
 # if (GSL_FOUND)
 #   message("GSL_LIBRARIES: ${GSL_LIBRARIES}")
 #   message("GSL_INCLUDE_DIRS: ${GSL_INCLUDE_DIRS}")
 # endif (GSL_FOUND)
 
+# Check HDF5
 find_package(HDF5 REQUIRED COMPONENTS C)
 
 # Some errors with FFTW3 CMakeLists.txt
 # find_package(FFTW3 REQUIRED)
 
 # Find FFTW3 with pkg-config
-set(ENV{PKG_CONFIG_PATH} $ENV{FFTW3_DIR}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH})
-pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
+# set(ENV{PKG_CONFIG_PATH} $ENV{FFTW3_DIR}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH})
+# pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
 
 #  tells CMake to build the application ex1 from the source file ex1.c
 #  this must appear AFTER the compilers are set
