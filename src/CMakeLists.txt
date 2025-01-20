@@ -4,9 +4,10 @@ add_executable(main
 # get_mat_eigenvals.cxx 
 # matexpre.cxx
 solver.cxx 
-test_solver.cxx
+# test_solver.cxx
 # test_pml_laplace_solver.cxx
 # test_petsc_dmda.cxx
+test_multipole_sources.cxx
 )
 
 # Manually set the include and library directories for SLEPc and FFTW3.
@@ -24,5 +25,5 @@ target_link_directories(main PUBLIC ${SLEPC_LIBRARY_DIRS})
 # message("FFTW3_LIBRARIES: ${FFTW3_LIBRARIES}")
 
 # target_link_libraries(main PUBLIC ${SLEPC_LINK_LIBRARIES} ${FFTW3_LIBRARIES} GSL::gsl hdf5::hdf5)
-target_link_libraries(main PUBLIC ${SLEPC_LINK_LIBRARIES} hdf5::hdf5)
+target_link_libraries(main PUBLIC ${SLEPC_LINK_LIBRARIES})
 

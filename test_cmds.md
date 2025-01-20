@@ -130,7 +130,7 @@ Those commands work.
 
 ./main -ksp_type fgmres -use_csp -csp_pc_type mg  -csp_ksp_rtol 1.0e-1 -csp_mg_levels_0_ksp_type preonly -csp_mg_levels_0_pc_type lu
 
-# 2015-01-16
+# 2025-01-16
 Found using asm will improve the performance.
 ./main -ksp_max_it 50 -use_csp -csp_ksp_type preonly -csp_pc_type mg  -csp_ksp_monitor_true_residual -csp_shift 0.5 -csp_pc_mg_cycle_type v -pc_mg_levels 3 -csp_mg_levels_pc_type asm -csp_mg_levels_ksp_type bcgs
   iter 25
@@ -176,6 +176,46 @@ mpiexec -n 16 ./main -k 120 -ksp_monitor_true_residual -use_csp -csp_shift 1.0 -
 mpiexec -n 16 ./main -k 140 -ksp_monitor_true_residual -use_csp -csp_shift 1.0 -csp_ksp_rtol 0.0001 -csp_ksp_max_it 10 -csp_ksp_type bcgs -csp_pc_type mg -csp_mg_levels_pc_type asm -csp_ksp_monitor_true_residual -pc_mg_levels 5 -csp_ksp_converged_reason
   iter 8
   Average inner mg iterations 5
+
+# 2025-01-20
+Found that if the rhs is specially chosen, the GMRES can converge in few iterations.
+E.g., in our two-pole source term, if we set r=1/16, there only are 5 iterations needed.
+Strange...
+
+It seems something wrong with superlu_dist...
+mpiexec -n 16 ./main -grids 9 -ksp_type preonly -pc_type lu -pc_factor_mat_solver_type superlu_dist
+It shows a very slow convergence.
+mpiexec -n 16 ./main -grids 9 -ksp_type preonly -pc_type lu -pc_factor_mat_solver_type mkl_cpardiso
+cpardiso is normal.
+
+mpiexec -n 16 ./main -grids 8 -use_csp -csp_shift 0.5 -csp_ksp_rtol 0.01 -csp_pc_type mg -csp_mg_levels_pc_type asm -pc_mg_levels 3 -csp_mg_coarse_pc_type lu -csp_mg_coarse_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -csp_ksp_monitor_true_residual
+  iter 61
+  Average inner mg iterations 5
+mpiexec -n 16 ./main -grids 8 -use_csp -csp_shift 0.5 -csp_ksp_rtol 0.01 -csp_pc_type mg -csp_mg_levels_pc_type asm -pc_mg_levels 2 -csp_mg_coarse_pc_type lu -csp_mg_coarse_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -csp_ksp_monitor_true_residual
+  iter 57
+  Average inner mg iterations 2
+
+Found that csp_shift=0.5 for grids=9 is not enough. 
+mpiexec -n 16 ./main -grids 9 -use_csp -csp_shift 0.5 -csp_ksp_rtol 0.0001 -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -csp_ksp_monitor_true_residual
+  iter 118
+mpiexec -n 16 ./main -grids 9 -use_csp -csp_shift 0.2 -csp_ksp_rtol 0.0001 -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -csp_ksp_monitor_true_residual
+  iter 39
+
+
+mpiexec -n 16 ./main -grids 8 -use_matex -matex_steps 4 -matex_time_steps_per_period 4 -matex_ksp_type preonly -matex_pc_type lu -matex_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -matex_ksp_initial_guess_nonzero false
+
+Let's go to matex.
+mpiexec -n 16 ./main -grids 9 -use_matex -matex_steps (1-4) -matex_time_steps_per_period 4 -matex_ksp_type preonly -matex_pc_type lu -matex_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -matex_ksp_initial_guess_nonzero false
+  steps=1 iter=5
+  steps=2 iter=6
+  steps=3 iter=8
+  steps=4 iter=?
+
+
+
+
+
+
 
 
 

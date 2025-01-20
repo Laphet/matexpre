@@ -166,7 +166,7 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
             1.0 / (hx * hx) /
             (get_g(x, omega, pml_c, absorber_lens_neg[0],
                    interior_domain_lens[0], absorber_lens_pos[0]) *
-             get_g(x_phalf, omega, pml_c, absorber_lens_pos[0],
+             get_g(x_phalf, omega, pml_c, absorber_lens_neg[0],
                    interior_domain_lens[0], absorber_lens_pos[0]));
         std::complex<double> temp_c =
             1.0 / (hy * hy) /
@@ -304,6 +304,36 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+template <unsigned int DIM> PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs) {
+  void *arhs = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(VecZeroEntries(rhs));
+  PetscCall(DMDAVecGetArray(dm, rhs, &arhs));
+  if constexpr (DIM == 2) {
+    PetscScalar **arhs_2d = reinterpret_cast<PetscScalar **>(arhs);
+    PetscInt x_center = total_dofs[0] / 2, y_center = total_dofs[1] / 2;
+    if (x_start <= x_center && x_center < x_start + x_len &&
+        y_start <= y_center && y_center < y_start + y_len) {
+      arhs_2d[y_center][x_center] = 1.0;
+    }
+  }
+
+  if constexpr (DIM == 3) {
+    PetscScalar ***arhs_3d = reinterpret_cast<PetscScalar ***>(arhs);
+    PetscInt x_center = total_dofs[0] / 2, y_center = total_dofs[1] / 2,
+             z_center = total_dofs[2] / 2;
+    if (x_start <= x_center && x_center < x_start + x_len &&
+        y_start <= y_center && y_center < y_start + y_len &&
+        z_start <= z_center && z_center < z_start + z_len) {
+      arhs_3d[z_center][y_center][x_center] = 1.0;
+    }
+  }
+
+  PetscCall(DMDAVecRestoreArray(dm, rhs, &arhs));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 template <unsigned int DIM> Solver<DIM>::~Solver() {
   // According to the PETSc manual, it is prefered to use PetscCallAbort.
   PetscCallAbort(PETSC_COMM_SELF, DMDestroy(&dm));
@@ -413,13 +443,13 @@ PetscErrorCode Solver<DIM>::save_xdmf_hdf5(Vec v,
   PetscFunctionBeginUser;
   // Prepare names.
   PetscCall(PetscObjectGetName(reinterpret_cast<PetscObject>(v), &vec_name));
-  xdmf_full_filename += std::string(vec_name) +
+  xdmf_full_filename += std::string(vec_name) + "_" +
                         std::string(xdmf_filename_surffix) +
                         std::string(".xmf");
   // Save .hdf5 file.
   PetscViewer hdf5_viewer = nullptr;
   PetscCall(PetscViewerHDF5Open(PETSC_COMM_WORLD, hdf5_full_filename.c_str(),
-                                FILE_MODE_WRITE, &hdf5_viewer));
+                                FILE_MODE_APPEND, &hdf5_viewer));
   PetscCall(PetscViewerHDF5PushGroup(hdf5_viewer, hdf5_groupname));
   PetscCall(VecView(v, hdf5_viewer));
   PetscCall(PetscViewerDestroy(&hdf5_viewer));
@@ -724,7 +754,8 @@ PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
   PetscCall(DMGetGlobalVector(dm, &CU));
   PetscCall(DMGetGlobalVector(dm, &sol));
   PetscCall(VecZeroEntries(sol));
-  for (unsigned int i = 1; i <= ctx->steps; ++i) {
+  for (unsigned int i = 0; i < ctx->steps; ++i) {
+    // At the end of the loop, U ~ U^{i+1}.
     // CU -> out(U) / v^2.
     PetscCall(VecPointwiseDivide(CU, out, ctx->velocity));
     PetscCall(VecPointwiseDivide(CU, CU, ctx->velocity));
@@ -810,10 +841,11 @@ PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
   for (auto k = 0; k < nlevels - 1; ++k)
     PetscCall(DMDestroy(&da_hierarchy[k]));
 
-  // Tests.
-  // PetscCall(PetscPrintf(PETSC_COMM_WORLD,
-  //                       "PCMGSetupViaCoarsen is called with levels=%d.\n",
-  //                       nlevels));
+#ifdef DEBUG
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                        "PCMGSetupViaCoarsen is called with levels=%d.\n",
+                        nlevels));
+#endif
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }

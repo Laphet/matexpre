@@ -34,6 +34,7 @@ option(USE_SLEPC "Use SLEPc" ON)
 # set root of location to find PETSc's pkg-config
 set(PETSC $ENV{PETSC_DIR}/$ENV{PETSC_ARCH})
 set(ENV{PKG_CONFIG_PATH} ${PETSC}/lib/pkgconfig)
+message("PKG_CONFIG_PATH: $ENV{PKG_CONFIG_PATH}")
 
 # Remove the lines below if you do not wish to have PETSc determine the compilers
 execute_process(COMMAND pkg-config PETSc --variable=ccompiler COMMAND tr -d '\n' OUTPUT_VARIABLE C_COMPILER)
@@ -57,8 +58,6 @@ find_package(PkgConfig REQUIRED)
 # Check PETSc and SLEPc libraries
 if (USE_SLEPC)
 # Check SLEPc
-  set(SLEPC $ENV{SLEPC_DIR}/$ENV{SLEPC_ARCH})
-  set(ENV{PKG_CONFIG_PATH} ${SLEPC}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH})
   # Importing slepc will automatically set variables for petsc. 
   pkg_check_modules(SLEPC REQUIRED SLEPc)
   # if (SLEPC_FOUND)
@@ -98,7 +97,7 @@ endif (USE_SLEPC)
 # endif (GSL_FOUND)
 
 # Check HDF5
-find_package(HDF5 REQUIRED COMPONENTS C)
+# find_package(HDF5 REQUIRED COMPONENTS C)
 
 # Some errors with FFTW3 CMakeLists.txt
 # find_package(FFTW3 REQUIRED)

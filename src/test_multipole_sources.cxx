@@ -8,6 +8,26 @@
 #include "petscvec.h"
 #include "solver.h"
 
+std::complex<double> func_two_pole(const double x, const double y,
+                                   const double z, void *ctx) {
+  double r = *reinterpret_cast<double *>(ctx);
+  GaussianCtx m_pole = {{0.5 - r, 0.5, 0.0}, r, 0.5 / (r * r * PETSC_PI)};
+  GaussianCtx p_pole = {{0.5 + r, 0.5, 0.0}, r, 0.5 / (r * r * PETSC_PI)};
+  return -func_gaussian(x, y, z, &m_pole) + func_gaussian(x, y, z, &p_pole);
+}
+
+std::complex<double> func_four_pole(const double x, const double y,
+                                    const double z, void *ctx) {
+  double r = *reinterpret_cast<double *>(ctx);
+  GaussianCtx mm_pole = {{0.5 - r, 0.5 - r, 0.0}, r, 0.5 / (r * r * PETSC_PI)};
+  GaussianCtx pp_pole = {{0.5 + r, 0.5 + r, 0.0}, r, 0.5 / (r * r * PETSC_PI)};
+  GaussianCtx mp_pole = {{0.5 - r, 0.5 + r, 0.0}, r, 0.5 / (r * r * PETSC_PI)};
+  GaussianCtx pm_pole = {{0.5 + r, 0.5 - r, 0.0}, r, 0.5 / (r * r * PETSC_PI)};
+
+  return func_gaussian(x, y, z, &mm_pole) + func_gaussian(x, y, z, &pp_pole) -
+         func_gaussian(x, y, z, &mp_pole) - func_gaussian(x, y, z, &pm_pole);
+}
+
 int main(int argc, char **argv) {
   PetscCall(PetscInitialize(&argc, &argv, nullptr, nullptr));
   // Data need to be cleaned up.
@@ -16,34 +36,28 @@ int main(int argc, char **argv) {
     Mat A = nullptr;
     KSP ksp = nullptr;
 
-    PetscInt pts_per_wavelen = 10;
-    PetscInt k = 20;
-    // PetscInt absorber_elems = 10;
-    double omega = -1.0, ratio = 0.92;
-    PetscBool use_csp = PETSC_FALSE, use_matex = PETSC_FALSE;
+    // q = 10, ratio = 15/16, k = 3 * z^(l-5)
+    // The grid is 2^l, omega is 2 * pi * k.
 
-    // Get options from command line.
-    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pts_per_wavelen",
-                                 &pts_per_wavelen, nullptr));
-    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-k", &k, nullptr));
-    // PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-absorber_elems",
-    //                              &absorber_elems, nullptr));
-    PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-ratio", &ratio, nullptr));
+    PetscInt pts_per_wavelen = 10;
+    PetscInt grids = 6;
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-grids", &grids, nullptr));
+    PetscCheck(grids >= 5, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+               "grids must be at least 5, but got %d.", grids);
+    PetscInt k = 3 * 1 << (grids - 5);
+    double ratio = 15.0 / 16;
+
+    PetscBool use_csp = PETSC_FALSE, use_matex = PETSC_FALSE;
     PetscCall(
         PetscOptionsGetBool(nullptr, nullptr, "-use_csp", &use_csp, nullptr));
     PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-use_matex", &use_matex,
                                   nullptr));
 
     // Update omega through k.
-    omega = 2.0 * PETSC_PI * k;
-    // Test omega=0.
-    // omega = 0.0;
-
-    PetscInt levels = std::ceil(std::log2(pts_per_wavelen * k / ratio));
+    PetscReal omega = 2.0 * PETSC_PI * k;
 
     // "solver" will be automatically cleaned up after the scope.
-    // Solver<2> solver(pts_per_wavelen * k, absorber_elems);
-    Solver<2> solver(levels, ratio);
+    Solver<2> solver(grids, ratio);
 
     // Create velocity vector.
     PetscCall(DMCreateGlobalVector(solver.dm, &velocity));
@@ -52,19 +66,23 @@ int main(int argc, char **argv) {
                                  "velocity"));
     // Create source vector.
     PetscCall(DMCreateGlobalVector(solver.dm, &source));
-    GaussianCtx ctx = {{0.5, 0.2, 0.0}, 0.1, 1.0};
-    PetscCall(solver.get_vec_from_func(source, func_gaussian, &ctx));
+    PetscBool use_four_pole = PETSC_FALSE;
+    PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-use_four_pole",
+                                  &use_four_pole, nullptr));
+    if (use_four_pole) {
+      double r = 3.0 / (1 << grids);
+      PetscCall(solver.get_vec_from_func(source, func_four_pole, &r));
+    } else {
+      double r = 3.0 / (1 << grids);
+      PetscCall(solver.get_vec_from_func(source, func_two_pole, &r));
+    }
+    // PetscCall(solver.get_delta_rhs(source));
     PetscCall(
         PetscObjectSetName(reinterpret_cast<PetscObject>(source), "source"));
-    PetscCall(solver.get_zeroed_boundary_vec(source));
     // Create matrix.
     PetscCall(DMCreateMatrix(solver.dm, &A));
     PetscCall(solver.get_laplace_mat(A, omega));
     PetscCall(get_shifted_velocity_mat(A, velocity, -omega * omega));
-    // PetscCall(PetscPrintf(
-    //     PETSC_COMM_WORLD,
-    //     "Test -i omega / v^2 Id - Laplace.\n Is this matrix easy to
-    //     solve?\n"));
     // Create solution vector.
     PetscCall(DMCreateGlobalVector(solver.dm, &u));
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(u), "solution"));
@@ -91,6 +109,8 @@ int main(int argc, char **argv) {
     PetscCall(KSPSetUp(ksp));
     // Get info.
     PetscCall(solver.print_info(omega));
+    // Zero the boundary.
+    PetscCall(solver.get_zeroed_boundary_vec(source));
     PetscCall(KSPSolve(ksp, source, u));
     PetscCall(KSPConvergedReasonView(ksp, nullptr));
 
@@ -110,7 +130,19 @@ int main(int argc, char **argv) {
                           its, residual_norm / source_norm, source_norm,
                           residual_norm));
 
-    // PetscCall(solver.save_xdmf_hdf5(u, "-test", "data.hdf5", "pml_solver"));
+    // Save the source and the solution.
+    PetscBool save_file = PETSC_FALSE;
+    PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-save_file", &save_file,
+                                  nullptr));
+    if (!save_file) {
+      std::string surfix("pole");
+      surfix += use_four_pole ? "4" : "2";
+      surfix += "_grids" + std::to_string(grids);
+      PetscCall(solver.save_xdmf_hdf5(source, surfix.c_str(), "data.hdf5",
+                                      surfix.c_str()));
+      PetscCall(solver.save_xdmf_hdf5(u, surfix.c_str(), "data.hdf5",
+                                      surfix.c_str()));
+    }
 
     // Clean up.
     PetscCall(DMRestoreGlobalVector(solver.dm, &residual));
@@ -123,36 +155,3 @@ int main(int argc, char **argv) {
 
   PetscCall(PetscFinalize());
 }
-
-// Tests.
-/*
-
-mpiexec -n 16 ./main -k 20 -absorber_elems 10
-  iter: 654
-mpiexec -n 16 ./main -k 20 -absorber_elems 10 -use_csp -csp_ksp_max_it 1/2
-  BREAKDOWN at iter=30
-mpiexec -n 16 ./main -k 20 -absorber_elems 10 -use_csp -csp_ksp_max_it 1
--csp_shift 0.1
-  BREAKDOWN at iter=30
-mpiexec -n 16 ./main -k 20 -absorber_elems 10 -use_csp -csp_ksp_type preonly
--csp_shift 3.0
-  Diverge at iter=10000
-mpiexec -n 16 ./main -k 20 -absorber_elems 10 -pc_type gamg
-  Diverge at iter=10000
-mpiexec -n 16 ./main -k 20 -absorber_elems 10 -use_csp -csp_pc_type asm
-  iter 9
-mpiexec -n 16 ./main -k 40 -absorber_elems 10 -use_csp -csp_pc_type asm
-  iter 13
-mpiexec -n 16 ./main -k 80 -absorber_elems 10 -use_csp -csp_pc_type asm
-  iter 20
-mpiexec -n 16 ./main -k 80 -absorber_elems 10 -pc_type asm
-  iter 1421
-mpiexec -n 16 ./main -k 80 -absorber_elems 10
-  iter 1562
-mpiexec -n 16 ./main -k 40 -absorber_elems 10 -use_csp -csp_ksp_type preonly
--csp_pc_type lu -ksp_monitor_true_residual
-iter 13
-
-mpiexec -n 16 ./main -k 40 -absorber_elems 10 -use_matex -matex_ksp_type preonly
--matex_pc_type lu
-*/

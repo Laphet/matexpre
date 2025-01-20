@@ -63,6 +63,8 @@ public:
 
   PetscErrorCode get_laplace_mat(Mat A, const double omega);
 
+  PetscErrorCode get_delta_rhs(Vec rhs);
+
   PetscErrorCode print_info(const double omega);
 
   PetscErrorCode get_zeroed_boundary_vec(Vec v);
