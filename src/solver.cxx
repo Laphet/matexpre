@@ -6,6 +6,7 @@
 #include "petscmat.h"
 #include "petscoptions.h"
 #include "petscpc.h"
+#include "petscpctypes.h"
 #include "petscsys.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
@@ -602,7 +603,6 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  // Construct P = A - shift Iu.
   PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-csp_shift", &ctx->shift,
                                 nullptr));
   PetscCheck(ctx->shift >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
@@ -619,9 +619,11 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   // Set default KSP type.
   PetscCall(KSPSetType(ctx->P_ksp, KSPBCGS));
   // Allow CML options.
-  PetscCall(PCSetOptionsPrefix(P_pc, "csp_"));
   PetscCall(KSPSetOptionsPrefix(ctx->P_ksp, "csp_"));
+  // KSPSetFromOptions will call PCSetFromOptions.
+  // Now pc knows that its type is mg.
   PetscCall(KSPSetFromOptions(ctx->P_ksp));
+
   // Set the PCMG for the P_ksp.
   PetscBool use_pcmg = PETSC_FALSE;
   PetscCall(PetscObjectTypeCompare(reinterpret_cast<PetscObject>(P_pc), PCMG,
@@ -634,6 +636,10 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   // KSPSetUp setup will call PCSetUp.
   PetscCall(KSPSetUp(ctx->P_ksp));
 
+#ifdef DEBUG
+  // PetscCall(PCView(P_pc, PETSC_VIEWER_STDOUT_WORLD));
+#endif
+
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
@@ -644,6 +650,10 @@ PetscErrorCode PCApply_ComplexShiftPre(PC pc, Vec in, Vec out) {
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
   PetscCall(KSPSolve(ctx->P_ksp, in, out));
+
+#ifdef DEBUG
+  PetscCall(KSPConvergedReasonView(ctx->P_ksp, nullptr));
+#endif
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -685,7 +695,6 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) {
   // Handle the CML options.
   PetscCall(PetscOptionsGetScalar(nullptr, nullptr, "-matex_alpha", &ctx->alpha,
                                   nullptr));
-
   PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_steps", &ctx->steps,
                                nullptr));
   PetscCheck(ctx->steps >= 1, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
@@ -714,9 +723,8 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) {
   PetscCall(KSPGetPC(ctx->Z_ksp, &Z_pc));
   // Set default KSP type.
   PetscCall(KSPSetType(ctx->Z_ksp, KSPBCGS));
-  KSPSetInitialGuessNonzero(ctx->Z_ksp, PETSC_TRUE);
+  // KSPSetInitialGuessNonzero(ctx->Z_ksp, PETSC_TRUE);
   // Allow CML options.
-  PetscCall(PCSetOptionsPrefix(Z_pc, "matex_"));
   PetscCall(KSPSetOptionsPrefix(ctx->Z_ksp, "matex_"));
   PetscCall(KSPSetFromOptions(ctx->Z_ksp));
   // Set the PCMG for the Z_ksp.
@@ -755,7 +763,7 @@ PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
   PetscCall(DMGetGlobalVector(dm, &sol));
   PetscCall(VecZeroEntries(sol));
   for (unsigned int i = 0; i < ctx->steps; ++i) {
-    // At the end of the loop, U ~ U^{i+1}.
+    // At the end of the loop, U ~ U^(i+1).
     // CU -> out(U) / v^2.
     PetscCall(VecPointwiseDivide(CU, out, ctx->velocity));
     PetscCall(VecPointwiseDivide(CU, CU, ctx->velocity));
@@ -765,8 +773,11 @@ PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
     double t = (i + 0.5) * delta_t;
     PetscCall(VecAXPBY(rhs, -2.0 * IU * ctx->omega / delta_t * ctx->alpha,
                        expim(-ctx->omega * i * delta_t), CU));
-    // Solve Z sol = rhs, sol ~ (U^{k+1}+U^k) / 2
+    // Solve Z sol = rhs, sol ~ (U^(k+1)+U^k) / 2
     PetscCall(KSPSolve(ctx->Z_ksp, rhs, sol));
+#ifdef DEBUG
+    PetscCall(KSPConvergedReasonView(ctx->Z_ksp, nullptr));
+#endif
     // out(U) = -out + 2 sol
     PetscCall(VecAXPBY(out, 2.0, -1.0, sol));
   }
@@ -778,6 +789,16 @@ PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
   PetscCall(DMRestoreGlobalVector(dm, &sol));
   PetscCall(DMRestoreGlobalVector(dm, &CU));
   PetscCall(DMRestoreGlobalVector(dm, &rhs));
+
+#ifdef DEBUG
+  PetscScalar schrodinger_shift = 2.0 / ctx->omega / delta_t * ctx->alpha;
+  PetscCall(PetscPrintf(
+      PETSC_COMM_WORLD,
+      "matex is called with steps=%d, delta_t=%.5f, "
+      "time_steps_per_period=%d, alpha=%.5f+%.5fi, csp_shift=%.5f+%.5fi.\n",
+      ctx->steps, delta_t, ctx->time_steps_per_period, ctx->alpha.real(),
+      ctx->alpha.imag(), schrodinger_shift.real(), schrodinger_shift.imag()));
+#endif
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -813,7 +834,7 @@ PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
 
   PetscFunctionBeginUser;
   PetscInt nlevels = 2;
-  PetscCall(PetscOptionsGetInt(NULL, NULL, "-pc_mg_levels", &nlevels, nullptr));
+  PetscCall(PCMGGetLevels(pc, &nlevels));
   PetscCheck(nlevels >= 2, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
              "The number of levels must be at least 2, but got %d.\n", nlevels);
 
@@ -824,7 +845,8 @@ PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
 
   PetscCall(PCMGSetLevels(pc, nlevels, nullptr));
   PetscCall(PCMGSetType(pc, PC_MG_MULTIPLICATIVE));
-  PetscCall(PCMGSetGalerkin(pc, PC_MG_GALERKIN_PMAT));
+  PetscCall(PCMGSetNumberSmooth(pc, 1));
+  PetscCall(PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH));
 
   // Reverse the da_hierarchy, now the finest is at the end.
   std::reverse(da_hierarchy.begin(), da_hierarchy.end());
@@ -838,8 +860,26 @@ PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
   }
 
   // Do not destroy the finest level.
-  for (auto k = 0; k < nlevels - 1; ++k)
+  for (auto k = 0; k < nlevels - 1; ++k) {
     PetscCall(DMDestroy(&da_hierarchy[k]));
+  }
+
+  // Define default solvers for each level.
+  // It seems that CML options will supercede all things below.
+  KSP ksp_each_level = nullptr;
+  PC pc_each_level = nullptr;
+  PetscCall(PCMGGetCoarseSolve(pc, &ksp_each_level));
+  PetscCall(KSPSetType(ksp_each_level, KSPPREONLY));
+  PetscCall(KSPGetPC(ksp_each_level, &pc_each_level));
+  PetscCall(PCSetType(pc_each_level, PCLU));
+  PetscCall(PCFactorSetMatSolverType(pc_each_level, MATSOLVERMKL_CPARDISO));
+  for (auto k = 1; k < nlevels; ++k) {
+    PetscCall(PCMGGetSmoother(pc, k, &ksp_each_level));
+    PetscCall(KSPSetType(ksp_each_level, KSPBCGS));
+    // It seems that we cannot find a routine to set default iteration numbers.
+    PetscCall(KSPGetPC(ksp_each_level, &pc_each_level));
+    PetscCall(PCSetType(pc_each_level, PCBJACOBI));
+  }
 
 #ifdef DEBUG
   PetscCall(PetscPrintf(PETSC_COMM_WORLD,
