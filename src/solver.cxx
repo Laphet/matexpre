@@ -11,6 +11,8 @@
 #include "petscsystypes.h"
 #include "petscvec.h"
 #include "petscviewerhdf5.h"
+#include "slepcfn.h"
+#include "slepcmfn.h"
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -603,15 +605,16 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-csp_shift", &ctx->shift,
-                                nullptr));
-  PetscCheck(ctx->shift >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
-             "The shift must be non-negative, but got %f.\n", ctx->shift);
+  PetscCall(PetscOptionsGetScalar(nullptr, nullptr, "-csp_shift", &ctx->shift,
+                                  nullptr));
+  PetscCheck(
+      ctx->shift.imag() >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+      "The shift.im must be non-negative, but got %f.\n", ctx->shift.imag());
 
   PetscCall(PCGetOperators(pc, &A, nullptr));
   PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->P_mat));
   PetscCall(get_shifted_velocity_mat(
-      ctx->P_mat, ctx->velocity, -ctx->omega * ctx->omega * IU * ctx->shift));
+      ctx->P_mat, ctx->velocity, ctx->omega * ctx->omega * (1.0 - ctx->shift)));
   // Set up the KSP for P^{-1} b = u.
   PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->P_ksp));
   PetscCall(KSPSetOperators(ctx->P_ksp, ctx->P_mat, ctx->P_mat));
@@ -688,56 +691,54 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) {
   // Stack variables.
   MatExPre *ctx = nullptr;
   Mat A = nullptr;
-  PC Z_pc = nullptr;
+  FN fn = nullptr;
+
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  // Handle the CML options.
-  PetscCall(PetscOptionsGetScalar(nullptr, nullptr, "-matex_alpha", &ctx->alpha,
-                                  nullptr));
+  PetscCall(PCGetOperators(pc, &A, nullptr));
+
+  // Handle CML options.
   PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_steps", &ctx->steps,
                                nullptr));
-  PetscCheck(ctx->steps >= 1, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
-             "The steps must be at least 1, but got %d.\n", ctx->steps);
-  PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_time_steps_per_period",
-                               &ctx->time_steps_per_period, nullptr));
-  PetscCheck(ctx->time_steps_per_period >= 1, PETSC_COMM_WORLD,
-             PETSC_ERR_ARG_OUTOFRANGE,
-             "The time steps per period must be at least 1, but got %d.\n",
-             ctx->time_steps_per_period);
+  PetscCheck(ctx->steps > 0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The steps must be positive, but got %d.\n", ctx->steps);
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-matex_delta_t",
+                                &ctx->delta_t, nullptr));
+  PetscCheck(ctx->delta_t > 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The delta_t must be positive, but got %f.\n", ctx->delta_t);
 
-  // Construct (-2i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
-  PetscCall(PCGetOperators(pc, &A, nullptr));
-  PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->Z_mat));
-  // -omega^2 (1-alpha) + omega^2.
-  PetscScalar shift = ctx->omega * ctx->omega * ctx->alpha;
-  // -i omega / delta_t alpha.
-  double delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
-  shift -= 2.0 * IU * ctx->omega / delta_t * ctx->alpha;
-  // Set the shifted matrix.
-  PetscCall(get_shifted_velocity_mat(ctx->Z_mat, ctx->velocity, shift));
+  // Create phi0.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi0));
+  PetscCall(MFNSetOperator(ctx->phi0, A));
+  PetscCall(MFNGetFN(ctx->phi0, &fn));
+  PetscCall(FNSetType(fn, FNEXP));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi0, "phi0_"));
+  PetscCall(MFNSetFromOptions(ctx->phi0));
+  PetscCall(MFNSetUp(ctx->phi0));
 
-  // Set up the KSP for Z^{-1} b = u.
-  PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->Z_ksp));
-  PetscCall(KSPSetOperators(ctx->Z_ksp, ctx->Z_mat, ctx->Z_mat));
-  PetscCall(KSPGetPC(ctx->Z_ksp, &Z_pc));
-  // Set default KSP type.
-  PetscCall(KSPSetType(ctx->Z_ksp, KSPBCGS));
-  // KSPSetInitialGuessNonzero(ctx->Z_ksp, PETSC_TRUE);
-  // Allow CML options.
-  PetscCall(KSPSetOptionsPrefix(ctx->Z_ksp, "matex_"));
-  PetscCall(KSPSetFromOptions(ctx->Z_ksp));
-  // Set the PCMG for the Z_ksp.
-  PetscBool use_pcmg = PETSC_FALSE;
-  PetscCall(PetscObjectTypeCompare(reinterpret_cast<PetscObject>(Z_pc), PCMG,
-                                   &use_pcmg));
-  DM dm = nullptr;
-  PetscCall(VecGetDM(ctx->velocity, &dm));
-  if (use_pcmg) {
-    PetscCall(PCMGSetupViaCoarsen(Z_pc, dm));
-  }
-  // KSPSetUp setup will call PCSetUp.
-  PetscCall(KSPSetUp(ctx->Z_ksp));
+  // Create phi1.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi1));
+  PetscCall(MFNSetOperator(ctx->phi1, A));
+  PetscCall(MFNGetFN(ctx->phi1, &fn));
+  PetscCall(FNSetType(fn, FNPHI));
+  PetscCall(FNPhiSetIndex(fn, 1));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi1, "phi1_"));
+  PetscCall(MFNSetFromOptions(ctx->phi1));
+  PetscCall(MFNSetUp(ctx->phi1));
+
+  // Create phi2.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi2));
+  PetscCall(MFNSetOperator(ctx->phi2, A));
+  PetscCall(MFNGetFN(ctx->phi2, &fn));
+  PetscCall(FNSetType(fn, FNPHI));
+  PetscCall(FNPhiSetIndex(fn, 2));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi2, "phi2_"));
+  PetscCall(MFNSetFromOptions(ctx->phi2));
+  PetscCall(MFNSetUp(ctx->phi2));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -745,60 +746,48 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) {
 PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out) {
   // Stack variables.
   MatExPre *ctx = nullptr;
-  // Use CU here to keep sol as the initial guess for the next iteration.
-  Vec rhs = nullptr, CU = nullptr, sol = nullptr;
-  DM dm = nullptr;
-  auto expim = [&](const double x) { return std::cos(x) + IU * std::sin(x); };
+  Vec E_in = nullptr, F_in = nullptr, phi_out = nullptr;
+
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  double delta_t = 2.0 * PETSC_PI / (ctx->omega * ctx->time_steps_per_period);
-  // Get the DM through the velocity.
-  PetscCall(VecGetDM(ctx->velocity, &dm));
+  PetscCall(VecDuplicate(in, &E_in));
+  PetscCall(VecDuplicate(in, &F_in));
+  PetscCall(VecDuplicate(in, &phi_out));
 
+  // Intialization.
+  PetscCall(VecCopy(in, E_in));
+  PetscCall(VecZeroEntries(F_in));
   PetscCall(VecZeroEntries(out));
-  // Create temporary vectors.
-  PetscCall(DMGetGlobalVector(dm, &rhs));
-  PetscCall(DMGetGlobalVector(dm, &CU));
-  PetscCall(DMGetGlobalVector(dm, &sol));
-  PetscCall(VecZeroEntries(sol));
-  for (unsigned int i = 0; i < ctx->steps; ++i) {
-    // At the end of the loop, U ~ U^(i+1).
-    // CU -> out(U) / v^2.
-    PetscCall(VecPointwiseDivide(CU, out, ctx->velocity));
-    PetscCall(VecPointwiseDivide(CU, CU, ctx->velocity));
-    // rhs -> in(f)
-    PetscCall(VecCopy(in, rhs));
-    // rhs -> -2i omega / delta_t * alpha * CU + exp(-i omega t^(k+0.5)) rhs.
-    double t = (i + 0.5) * delta_t;
-    PetscCall(VecAXPBY(rhs, -2.0 * IU * ctx->omega / delta_t * ctx->alpha,
-                       expim(-ctx->omega * i * delta_t), CU));
-    // Solve Z sol = rhs, sol ~ (U^(k+1)+U^k) / 2
-    PetscCall(KSPSolve(ctx->Z_ksp, rhs, sol));
-#ifdef DEBUG
-    PetscCall(KSPConvergedReasonView(ctx->Z_ksp, nullptr));
-#endif
-    // out(U) = -out + 2 sol
-    PetscCall(VecAXPBY(out, 2.0, -1.0, sol));
+
+  // The main loop.
+  for (auto k = 0; k < ctx->steps; ++k) {
+    // phi2_out = phi2(i h A)E.
+    PetscCall(MFNSolve(ctx->phi2, E_in, phi_out));
+    // G^{k+1} = G^k + h F^k + h**2 phi2_out.
+    PetscCall(VecAXPBYPCZ(out, ctx->delta_t, ctx->delta_t * ctx->delta_t, 1.0,
+                          F_in, phi_out));
+
+    // If we reach the last step, we do not need to update rest vectors.
+    if (k + 1 == ctx->steps)
+      break;
+
+    // phi1_out = phi1(i h A)E.
+    PetscCall(MFNSolve(ctx->phi1, E_in, phi_out));
+    // F^{k+1} = F^k + h phi1_out.
+    PetscCall(VecAXPY(F_in, ctx->delta_t, phi_out));
+
+    // phi0_out = exp(i h A)E.
+    PetscCall(MFNSolve(ctx->phi0, E_in, phi_out));
+    // E^{k+1} <- phi0_out.
+    PetscCall(VecCopy(phi_out, E_in));
   }
-  // out = out exp(i omega T)
-  double T = ctx->steps * delta_t;
-  PetscCall(VecScale(out, expim(ctx->omega * T)));
+  PetscCall(VecScale(out, -IU / (ctx->delta_t * ctx->steps)));
 
-  // Destroy the temporary vectors.
-  PetscCall(DMRestoreGlobalVector(dm, &sol));
-  PetscCall(DMRestoreGlobalVector(dm, &CU));
-  PetscCall(DMRestoreGlobalVector(dm, &rhs));
-
-#ifdef DEBUG
-  PetscScalar schrodinger_shift = 2.0 / ctx->omega / delta_t * ctx->alpha;
-  PetscCall(PetscPrintf(
-      PETSC_COMM_WORLD,
-      "matex is called with steps=%d, delta_t=%.5f, "
-      "time_steps_per_period=%d, alpha=%.5f+%.5fi, csp_shift=%.5f+%.5fi.\n",
-      ctx->steps, delta_t, ctx->time_steps_per_period, ctx->alpha.real(),
-      ctx->alpha.imag(), schrodinger_shift.real(), schrodinger_shift.imag()));
-#endif
+  // Clean up.
+  PetscCall(VecDestroy(&phi_out));
+  PetscCall(VecDestroy(&F_in));
+  PetscCall(VecDestroy(&E_in));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -809,9 +798,9 @@ PetscErrorCode PCDestroy_MatExPre(PC pc) {
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  PetscCall(MatDestroy(&ctx->Z_mat));
-  // KSPDestroy will call PCDestroy.
-  PetscCall(KSPDestroy(&ctx->Z_ksp));
+  PetscCall(MFNDestroy(&ctx->phi0));
+  PetscCall(MFNDestroy(&ctx->phi1));
+  PetscCall(MFNDestroy(&ctx->phi2));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -876,7 +865,6 @@ PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
   for (auto k = 1; k < nlevels; ++k) {
     PetscCall(PCMGGetSmoother(pc, k, &ksp_each_level));
     PetscCall(KSPSetType(ksp_each_level, KSPBCGS));
-    // It seems that we cannot find a routine to set default iteration numbers.
     PetscCall(KSPGetPC(ksp_each_level, &pc_each_level));
     PetscCall(PCSetType(pc_each_level, PCBJACOBI));
   }

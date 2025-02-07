@@ -6,7 +6,9 @@
 #include "petscsys.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
+#include "slepceps.h"
 #include "solver.h"
+#include <vector>
 
 std::complex<double> func_two_pole(const double x, const double y,
                                    const double z, void *ctx) {
@@ -29,7 +31,7 @@ std::complex<double> func_four_pole(const double x, const double y,
 }
 
 int main(int argc, char **argv) {
-  PetscCall(PetscInitialize(&argc, &argv, nullptr, nullptr));
+  PetscCall(SlepcInitialize(&argc, &argv, nullptr, nullptr));
   // Data need to be cleaned up.
   {
     Vec velocity = nullptr, source = nullptr, u = nullptr, residual = nullptr;
@@ -101,7 +103,7 @@ int main(int argc, char **argv) {
       PetscCall(PCShell_ComplexShiftPre(pc, &csp_ctx));
     }
     if (use_matex) {
-      MatExPre matex_ctx = {1, 4, 1 / omega, omega, velocity, nullptr, nullptr};
+      MatExPre matex_ctx = {0.1, 5, omega, omega, velocity, nullptr, nullptr};
       PC pc = nullptr;
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_MatExPre(pc, &matex_ctx));
@@ -144,6 +146,41 @@ int main(int argc, char **argv) {
                                       surfix.c_str()));
     }
 
+    // Mat v_2_A = nullptr;
+    // EPS eps = nullptr;
+    // // Study the eigenvalues.
+    // PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &v_2_A));
+    // // Borrow the residual vector.
+    // PetscCall(VecPointwiseMult(residual, velocity, velocity));
+    // PetscCall(MatDiagonalScale(v_2_A, residual, nullptr));
+    // // Slepc stuff.
+    // PetscCall(EPSCreate(PETSC_COMM_WORLD, &eps));
+    // PetscCall(EPSSetOperators(eps, A, nullptr));
+    // PetscCall(EPSSetProblemType(eps, EPS_NHEP));
+    // PetscCall(EPSSetDimensions(eps, 8, PETSC_DEFAULT, PETSC_DEFAULT));
+    // PetscCall(EPSSetWhichEigenpairs(eps, EPS_LARGEST_IMAGINARY));
+    // PetscCall(EPSSetFromOptions(eps));
+    // PetscCall(EPSSolve(eps));
+    // PetscInt nconv = 0;
+    // PetscCall(EPSGetConverged(eps, &nconv));
+    // PetscPrintf(PETSC_COMM_WORLD, "Number of converged eigenpairs: %d\n",
+    //             nconv);
+    // std::vector<PetscScalar> eigvals(nconv);
+    // for (PetscInt i = 0; i < nconv; ++i) {
+    //   PetscScalar kr = 0.0 + 0.0i;
+    //   PetscReal lambda_r = 0.0, lambda_i = 0.0;
+
+    //   PetscCall(EPSGetEigenpair(eps, i, &kr, nullptr, nullptr, nullptr));
+    //   lambda_r = PetscRealPart(kr);
+    //   lambda_i = PetscImaginaryPart(kr);
+    //   PetscPrintf(PETSC_COMM_WORLD, "Eigenvalue %d: %.5e\t+\t%.5ei\n", i,
+    //               lambda_r, lambda_i);
+
+    //   eigvals[i] = kr;
+    // }
+    // PetscCall(EPSDestroy(&eps));
+    // PetscCall(MatDestroy(&v_2_A));
+
     // Clean up.
     PetscCall(DMRestoreGlobalVector(solver.dm, &residual));
     PetscCall(KSPDestroy(&ksp));
@@ -153,5 +190,5 @@ int main(int argc, char **argv) {
     PetscCall(VecDestroy(&velocity));
   }
 
-  PetscCall(PetscFinalize());
+  PetscCall(SlepcFinalize());
 }

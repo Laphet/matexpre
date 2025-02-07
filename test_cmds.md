@@ -597,13 +597,165 @@ mpiexec -n 16 ./main -grids 11 -use_matex -matex_alpha 1.57079e-2 -matex_time_st
 
 I'd change the strategy.
 
+# 2025-01-23
+Change to the real matrix exponential method.
 
+First check the mg convergence is OK?
+```
+mpiexec -n 16 ./main -grids (9-11) -use_matex -matex_delta_t 0.1 -matex_steps 2 -matex_pc_type mg -matex_pc_mg_levels 5 -ksp_monitor_true_residual -matex_ksp_monitor_true_residual -ksp_max_it 1
+```
+  grids=9, inner_mg=7
+  grids=10, inner_mg=11
+  grids=11, inner_mg=25
+Sadly, it grows.
+Let's change -matex_delta_t=0.05
+```
+mpiexec -n 16 ./main -grids (9-11) -use_matex -matex_delta_t 0.05 -matex_steps 2 -matex_pc_type mg -matex_pc_mg_levels 5 -ksp_monitor_true_residual -matex_ksp_monitor_true_residual -ksp_max_it 1
+```
+  grids=9, inner_mg=6
+  grids=10, inner_mg=10
+  grids=11, inner_mg>40? strange, set delta_t to 0.01, not better.
+But one mg is enough to get arround E-2.
+If set -matex_delta_t 0.00001
+  grids=11, inner_mg=2.
 
+```
+mpiexec -n 16 ./main -grids 11 -use_matex -matex_delta_t 0.1 -matex_steps 10 -matex_pc_type mg -matex_pc_mg_levels 5 -ksp_monitor_true_residual -ksp_max_it 10 -matex_ksp_max_it 1
+```
+  final error=3.90148e-01
+```
+mpiexec -n 16 ./main -grids 11 -use_matex -matex_delta_t 0.1 -matex_steps 1 -matex_pc_type mg -matex_pc_mg_levels 5 -ksp_monitor_true_residual -ksp_max_it 10 -matex_ksp_max_it 1
+```
+  final error=3.79875e-01
 
+Test, what if mg is replaced by LU?
+```
+mpiexec -n 16 ./main -grids 9 -use_matex -matex_delta_t 0.1 -matex_steps 1 -matex_ksp_type preonly -matex_pc_type lu -matex_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -matex_ksp_monitor_true_residual -ksp_max_it 20
+```
 
+```
+mpiexec -n 16 ./main -grids 9 -use_matex -matex_delta_t 0.1 -matex_steps 10 -matex_ksp_type preonly -matex_pc_type lu -matex_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 20
+```
+Almost GMRES convergence...
+```
+mpiexec -n 16 ./main -grids 9 -use_matex -matex_delta_t 0.01 -matex_steps 200 -matex_ksp_type preonly -matex_pc_type lu -matex_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 1
+```
+  Final error=7.26169e-01, worse than GMRES...
 
+Tired...
+```
+mpiexec -n 16 ./main -grids 9 -use_matex -matex_delta_t 0.1 -matex_steps 10 -matex_alpha 10 -matex_ksp_type preonly -matex_pc_type lu -matex_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 1
+```
 
+```
+mpiexec -n 16 ./main -grids 9 -use_csp -csp_shift 0.00010994052390438496 -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -csp_monitor_true_residual -ksp_max_it 1
+```
 
+# 2025-02-03
+Try improving csp with GO techniques for high-frequency equations.
+(-omega^2 n^2 (r exp(theta)) - Delta)u=s.
+They should hold that r=2/(cos theta + 1).
+
+theta=pi/4
+```
+mpiexec -n 16 ./main -grids 9 -use_csp -csp_shift 0.8284271247461902+0.8284271247461901i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=2.46536e-01
+
+theta=pi/6
+```
+mpiexec -n 16 ./main -grids 9 -use_csp -csp_shift 0.9282032302755092+0.5358983848622453i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=2.08291e-01
+
+theta=pi/8
+```
+mpiexec -n 16 ./main -grids 9 -use_csp -csp_shift 0.9604338701034201+0.39782473475931607i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=1.83228e-01
+
+default bjacob
+```
+mpiexec -n 16 ./main -grids 9 -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=4.29343e-01
+
+without preconditioner
+```
+mpiexec -n 16 ./main -grids 9 -pc_type none -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=3.76302e-01
+
+Test grids=10
+```
+mpiexec -n 16 ./main -grids 10 -pc_type none -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=3.76302e-01
+
+```
+mpiexec -n 16 ./main -grids 10 -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=4.29343e-01
+
+theta=pi/8
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 0.9604338701034201+0.39782473475931607i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=1.83228e-01
+
+theta=pi/6
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 0.9282032302755092+0.5358983848622453i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=2.08291e-01
+
+theta=pi/4
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 0.8284271247461902+0.8284271247461901i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=2.46536e-01
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 0.8284271247461902+0.8284271247461901i -csp_pc_type mg -csp_pc_mg_levels 5 -csp_ksp_monitor_true_residual -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=2.46994e-01
+Use **asm** instead of **mg**
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 0.8284271247461902+0.8284271247461901i -csp_pc_type asm -csp_ksp_monitor_true_residual -csp_ksp_max_it 10 -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=2.46544e-01
+What if forget **WKB** relation?
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.8284271247461901i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=2.39648e-01
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.5358983848622453i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=2.04050e-01
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.39782473475931607i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=1.81110e-01
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.0001i -csp_pc_type asm -csp_ksp_max_it 4  -ksp_monitor_true_residual -ksp_max_it 10
+```
+error=3.01138e-01
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.0001i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+converged iterations 3
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.001i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+converged iterations 4
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.01i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+converged iterations 7
+```
+mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.1i -csp_ksp_type preonly -csp_pc_type lu -csp_pc_factor_mat_solver_type mkl_cpardiso -ksp_monitor_true_residual -ksp_max_it 10
+```
+do **not** converge in 10, converged iterations 34
 
 
 

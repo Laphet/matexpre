@@ -1,4 +1,5 @@
 #include "petscksp.h"
+#include "slepcmfn.h"
 #include <complex>
 #include <cstddef>
 
@@ -104,9 +105,10 @@ std::complex<double> func_gaussian(const double x, const double y,
                                    const double z, void *ctx);
 
 // Complex shift preconditioner.
+// Shift is a complex number.
 struct ComplexShiftPre {
-  // P = - (1+i shift) omega^2/v^2 - Delta.
-  double shift;
+  // P = - (shift) omega^2/v^2 - Delta.
+  PetscScalar shift;
   double omega;
   Vec velocity;
   Mat P_mat;
@@ -117,20 +119,15 @@ extern PetscErrorCode PCApply_ComplexShiftPre(PC pc, Vec in, Vec out);
 extern PetscErrorCode PCDestroy_ComplexShiftPre(PC pc);
 PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx);
 
-// Schrodinger time-domain preconditioner.
-// -i omega dot(U) alpha - omega^2 U (1-alpha) - v^2 Delta U
-//      = g exp(-i omega t).
-// Crank-Nicolson scheme.
+// Matrix exponential preconditioner.
+// -i/T \int_0^T \int_0^t e^{i A s} ds dt ~ A^{-1}.
 struct MatExPre {
-  // T = steps * 2 Pi / omega / time_steps_per_period.
+  double delta_t;
   PetscInt steps;
-  PetscInt time_steps_per_period;
-  PetscScalar alpha;
-  double omega;
-  Vec velocity;
-  // Z = (-2i omega / delta_t alpha - omega^2 (1-alpha))/v^2 - Delta.
-  Mat Z_mat;
-  KSP Z_ksp;
+  // Three matrix functions.
+  MFN phi0; // aka exp
+  MFN phi1;
+  MFN phi2;
 };
 extern PetscErrorCode PCSetUp_MatExPre(PC pc);
 extern PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out);
