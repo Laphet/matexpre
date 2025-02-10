@@ -7,7 +7,8 @@ solver.cxx
 # test_solver.cxx
 # test_pml_laplace_solver.cxx
 # test_petsc_dmda.cxx
-test_multipole_sources.cxx
+# test_pml_laplace_solver.cxx
+test_matex.cxx
 )
 
 # Manually set the include and library directories for SLEPc and FFTW3.

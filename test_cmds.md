@@ -757,11 +757,19 @@ mpiexec -n 16 ./main -grids 10 -use_csp -csp_shift 1+0.1i -csp_ksp_type preonly 
 ```
 do **not** converge in 10, converged iterations 34
 
+# 2025-02-10
+Test true matex.
+```
+mpiexec -n 16 ./main -freq 20 -use_matex -ksp_monitor_true_residual -phi0_mfn_converged_reason -phi1_mfn_converged_reason -phi2_mfn_converged_reason
+```
+iter: 10
 
+mpiexec -n 16 ./main -freq 20 
 
-
-
-
+Test eigenvalues
+```
+mpiexec -n 16 ./main -freq 80 -st_ksp_type preonly -st_pc_type lu -st_pc_factor_mat_solver_type mkl_cpardiso
+```
 
 
 

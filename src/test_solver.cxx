@@ -83,7 +83,8 @@ int main(int argc, char **argv) {
       PetscCall(PCShell_ComplexShiftPre(pc, &csp_ctx));
     }
     if (use_matex) {
-      MatExPre matex_ctx = {1, 4, 1 / omega, omega, velocity, nullptr, nullptr};
+      MatExPre matex_ctx = {1.0 / (omega * omega), k, nullptr, nullptr,
+                            nullptr};
       PC pc = nullptr;
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_MatExPre(pc, &matex_ctx));
