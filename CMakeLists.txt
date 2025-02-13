@@ -29,7 +29,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   # message(CMAKE_CXX_FLAGS_DEBUG="${CMAKE_CXX_FLAGS_DEBUG}")
 endif()
 
-option(USE_SLEPC "Use SLEPc" ON)
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  add_compile_options(-O3)
+  # message(CMAKE_CXX_FLAGS_RELEASE="${CMAKE_CXX_FLAGS_RELEASE}")
+endif()
 
 # set root of location to find PETSc's pkg-config
 set(PETSC $ENV{PETSC_DIR}/$ENV{PETSC_ARCH})
@@ -56,11 +59,11 @@ endif (FORTRAN_COMPILER)
 
 find_package(PkgConfig REQUIRED)
 # Check PETSc and SLEPc libraries
-if (USE_SLEPC)
+
 # Check SLEPc
-  # Importing slepc will automatically set variables for petsc. 
-  pkg_check_modules(SLEPC REQUIRED SLEPc)
-  # if (SLEPC_FOUND)
+# Importing slepc will automatically set variables for petsc. 
+pkg_check_modules(SLEPC REQUIRED SLEPc)
+# if (SLEPC_FOUND)
   #   message("SLEPC_LIBRARIES: ${SLEPC_LIBRARIES}")
   #   message("SLEPC_LINK_LIBRARIES: ${SLEPC_LINK_LIBRARIES}")
   #   message("SLEPC_LIBRARY_DIRS: ${SLEPC_LIBRARY_DIRS}")
@@ -71,49 +74,12 @@ if (USE_SLEPC)
   #   message("SLEPC_CFLAGS_OTHER: ${SLEPC_CFLAGS_OTHER}")
   #   message("SLEPC_VERSION: ${SLEPC_VERSION}")
   #   message("SLEPC_PREFIX: ${SLEPC_PREFIX}")
-  # endif (SLEPC_FOUND)
-else ()
-  pkg_check_modules(PETSC REQUIRED PETSc)
-  # All variables from pkg-config are available in PETSC
-  # if (PETSC_FOUND)
-  #   message("PETSC_LIBRARIES: ${PETSC_LIBRARIES}")
-  #   message("PETSC_LINK_LIBRARIES: ${PETSC_LINK_LIBRARIES}")
-  #   message("PETSC_LIBRARY_DIRS: ${PETSC_LIBRARY_DIRS}")
-  #   message("PETSC_LDFLAGS: ${PETSC_LDFLAGS}")
-  #   message("PETSC_LDFLAGS_OTHER: ${PETSC_LDFLAGS_OTHER}")
-  #   message("PETSC_INCLUDE_DIRS: ${PETSC_INCLUDE_DIRS}")
-  #   message("PETSC_CFLAGS: ${PETSC_CFLAGS}")
-  #   message("PETSC_CFLAGS_OTHER: ${PETSC_CFLAGS_OTHER}")
-  #   message("PETSC_VERSION: ${PETSC_VERSION}")
-  #   message("PETSC_PREFIX: ${PETSC_PREFIX}")
-  # endif (PETSC_FOUND)
-endif (USE_SLEPC)
+# endif (SLEPC_FOUND)
 
-# Check gsl
-# find_package(GSL REQUIRED)
-# if (GSL_FOUND)
-#   message("GSL_LIBRARIES: ${GSL_LIBRARIES}")
-#   message("GSL_INCLUDE_DIRS: ${GSL_INCLUDE_DIRS}")
-# endif (GSL_FOUND)
-
-# Check HDF5
-# find_package(HDF5 REQUIRED COMPONENTS C)
-
-# Some errors with FFTW3 CMakeLists.txt
-# find_package(FFTW3 REQUIRED)
-
-# Find FFTW3 with pkg-config
-# set(ENV{PKG_CONFIG_PATH} $ENV{FFTW3_DIR}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH})
-# pkg_check_modules(FFTW3 REQUIRED IMPORTED_TARGET fftw3)
-
-#  tells CMake to build the application ex1 from the source file ex1.c
-#  this must appear AFTER the compilers are set
+#  This must appear AFTER the compilers are set
 project(matexpre CXX)
 
 # Put the executable in the bin directory.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 
 add_subdirectory(src)
-
-
-

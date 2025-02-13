@@ -38,6 +38,7 @@ int main(int argc, char **argv) {
     Vec velocity = nullptr, source = nullptr, u = nullptr, residual = nullptr;
     Mat A = nullptr;
     KSP ksp = nullptr;
+    DM dm = nullptr;
 
     PetscInt pts_per_wavelen = 10;
     PetscInt freq = 20;
@@ -58,14 +59,16 @@ int main(int argc, char **argv) {
     omega = 2.0 * PETSC_PI * freq;
 
     Solver<2> solver(freq * pts_per_wavelen, pml_width * pts_per_wavelen);
+    // Borrow the DM.
+    PetscCall(solver.get_dm(&dm));
     // Create velocity vector.
-    PetscCall(DMCreateGlobalVector(solver.dm, &velocity));
+    PetscCall(DMCreateGlobalVector(dm, &velocity));
     PetscCall(solver.get_vec_from_func(velocity, func_one, nullptr));
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(velocity),
                                  "velocity"));
 
     // Create source vector.
-    PetscCall(DMCreateGlobalVector(solver.dm, &source));
+    PetscCall(DMCreateGlobalVector(dm, &source));
     // Radius is 3h.
     double r = 3.0 / (pts_per_wavelen * freq);
     PetscBool use_four_pole = PETSC_FALSE;
@@ -80,18 +83,18 @@ int main(int argc, char **argv) {
         PetscObjectSetName(reinterpret_cast<PetscObject>(source), "source"));
 
     // Create matrix.
-    PetscCall(DMCreateMatrix(solver.dm, &A));
+    PetscCall(DMCreateMatrix(dm, &A));
     PetscCall(solver.get_laplace_mat(A, omega));
     // Now, A is -Delta, and we need A = omega^2 Id + v^2 Delta,
     // such that Im(lambda(A)) >= 0.
     // Borrow residual.
-    PetscCall(DMGetGlobalVector(solver.dm, &residual));
-    PetscCall(VecPointwiseDivide(residual, velocity, velocity));
+    PetscCall(DMGetGlobalVector(dm, &residual));
+    PetscCall(VecPointwiseMult(residual, velocity, velocity));
     PetscCall(MatDiagonalScale(A, residual, nullptr));
     PetscCall(MatShift(A, -omega * omega));
     PetscCall(MatScale(A, -1.0));
     // Create solution vector.
-    PetscCall(DMCreateGlobalVector(solver.dm, &u));
+    PetscCall(DMCreateGlobalVector(dm, &u));
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(u), "solution"));
 
     // Solve the system.
@@ -140,7 +143,7 @@ int main(int argc, char **argv) {
     // PETSc convergence test should be ||P^{-1}(b - A x)|| < rtol ||P^{-1}b||,
     // which is not residual l2 norm.
     // This is reasonalbe because P^{-1}b has the same unit as u.
-    PetscCall(DMGetGlobalVector(solver.dm, &residual));
+    PetscCall(DMGetGlobalVector(dm, &residual));
     PetscCall(MatResidual(A, source, u, residual));
     PetscReal source_norm = 0.0, residual_norm = 0.0;
     PetscCall(VecNorm(source, NORM_2, &source_norm));
@@ -151,7 +154,7 @@ int main(int argc, char **argv) {
                           its, residual_norm / source_norm, source_norm,
                           residual_norm));
 
-    PetscCall(DMRestoreGlobalVector(solver.dm, &residual));
+    PetscCall(DMRestoreGlobalVector(dm, &residual));
     PetscCall(KSPDestroy(&ksp));
     PetscCall(VecDestroy(&u));
     PetscCall(MatDestroy(&A));

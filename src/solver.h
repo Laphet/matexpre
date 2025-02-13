@@ -43,6 +43,8 @@ private:
   // Coordinate DMDA.
   DM cdm;
   Vec vcoords;
+  // The main DM object.
+  DM dm;
 
   // DM information.
   PetscInt x_start, y_start, z_start;
@@ -57,14 +59,20 @@ private:
   PetscErrorCode _setup();
 
 public:
-  // The main DM object.
-  DM dm;
+  PetscErrorCode get_dm(DM *dm_out);
 
   PetscErrorCode get_vec_from_func(Vec v, func_ptr f, void *ctx);
+
+  PetscErrorCode read_hdf5_vec(Vec v, const char *hdf5_filename,
+                               const char *hdf5_groupname,
+                               const char *vec_int_name);
 
   PetscErrorCode get_laplace_mat(Mat A, const double omega);
 
   PetscErrorCode get_delta_rhs(Vec rhs);
+
+  PetscErrorCode get_delta_rhs(Vec rhs, PetscInt i0_offset, PetscInt j0_offset,
+                               PetscInt k0_offset);
 
   PetscErrorCode print_info(const double omega);
 
@@ -79,6 +87,9 @@ public:
                                 const char *hdf5_groupname);
 
   Solver(const int uniform_interior_elems, const int uniform_absorber_elems);
+
+  Solver(const int uniform_absorber_elems, const int interior_elems[],
+         const double interior_domain_lens[]);
 
   // The total_dofs = 2^levels + 1.
   // The interior_elems ~ total_dofs * ratio (should be an even number).

@@ -10,6 +10,7 @@
 #include "petscsys.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
+#include "petscviewer.h"
 #include "petscviewerhdf5.h"
 #include "slepcfn.h"
 #include "slepcmfn.h"
@@ -28,15 +29,15 @@ std::complex<double> Solver<DIM>::get_g(const double r, const double omega,
                                         const double absorber_len_neg,
                                         const double interior_domain_len,
                                         const double absorber_len_pos) {
-  if (0.0 <= r && r <= interior_domain_len)
-    return std::complex<double>(1.0, 0.0);
-  else if (r < 0.0) {
+  // Can we treat zero Dirichlet BC uniformly if PML is not used?
+  if (r < 0.0 && absorber_len_neg > 0.0) {
     double temp = -r / absorber_len_neg;
     return 1.0 + IU * (c * temp * temp / absorber_len_neg) / omega;
-  } else {
+  } else if (r > interior_domain_len && absorber_len_pos > 0.0) {
     double temp = (r - interior_domain_len) / absorber_len_pos;
     return 1.0 + IU * (c * temp * temp / absorber_len_pos) / omega;
-  }
+  } else
+    return std::complex<double>(1.0, 0.0);
 }
 
 // interior_elems/absorber_elems_neg/absorber_elems_pos/interior_domain_lens
@@ -96,6 +97,12 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
   PetscCall(
       DMDAGetCorners(dm, &x_start, &y_start, &z_start, &x_len, &y_len, &z_len));
 
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+template <unsigned int DIM> PetscErrorCode Solver<DIM>::get_dm(DM *dm_out) {
+  PetscFunctionBeginUser;
+  *dm_out = dm;
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
@@ -308,6 +315,27 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
 }
 
 template <unsigned int DIM> PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs) {
+
+  PetscFunctionBeginUser;
+
+  if constexpr (DIM == 2) {
+    PetscInt x_center = interior_elems[0] / 2, y_center = interior_elems[1] / 2;
+    PetscCall(get_delta_rhs(rhs, x_center, y_center, 0));
+  }
+
+  if constexpr (DIM == 3) {
+    PetscInt x_center = interior_elems[0] / 2, y_center = interior_elems[1] / 2,
+             z_center = interior_elems[2] / 2;
+    PetscCall(get_delta_rhs(rhs, x_center, y_center, z_center));
+  }
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+template <unsigned int DIM>
+PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs, PetscInt i0_offset,
+                                          PetscInt j0_offset,
+                                          PetscInt k0_offset) {
   void *arhs = nullptr;
 
   PetscFunctionBeginUser;
@@ -315,21 +343,23 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs) {
   PetscCall(DMDAVecGetArray(dm, rhs, &arhs));
   if constexpr (DIM == 2) {
     PetscScalar **arhs_2d = reinterpret_cast<PetscScalar **>(arhs);
-    PetscInt x_center = total_dofs[0] / 2, y_center = total_dofs[1] / 2;
-    if (x_start <= x_center && x_center < x_start + x_len &&
-        y_start <= y_center && y_center < y_start + y_len) {
-      arhs_2d[y_center][x_center] = 1.0;
+    PetscInt i0 = absorber_elems_neg[0] + i0_offset,
+             j0 = absorber_elems_neg[0] + j0_offset;
+
+    if (x_start <= i0 && i0 < x_start + x_len && y_start <= j0 &&
+        j0 < y_start + y_len) {
+      arhs_2d[j0][i0] = 1.0;
     }
   }
 
   if constexpr (DIM == 3) {
     PetscScalar ***arhs_3d = reinterpret_cast<PetscScalar ***>(arhs);
-    PetscInt x_center = total_dofs[0] / 2, y_center = total_dofs[1] / 2,
-             z_center = total_dofs[2] / 2;
-    if (x_start <= x_center && x_center < x_start + x_len &&
-        y_start <= y_center && y_center < y_start + y_len &&
-        z_start <= z_center && z_center < z_start + z_len) {
-      arhs_3d[z_center][y_center][x_center] = 1.0;
+    PetscInt i0 = absorber_elems_neg[0] + i0_offset,
+             j0 = absorber_elems_neg[0] + j0_offset,
+             k0 = absorber_elems_neg[0] + k0_offset;
+    if (x_start <= i0 && i0 < x_start + x_len && y_start <= j0 &&
+        j0 < y_start + y_len && z_start <= k0 && k0 < z_start + z_len) {
+      arhs_3d[k0][j0][i0] = 1.0;
     }
   }
 
@@ -363,6 +393,92 @@ Solver<DIM>::Solver(const int levels, const double ratio) {
     absorber_elems_pos[i] = ((1 << levels) - interior_elems[i]) / 2;
   }
   PetscCallAbort(PETSC_COMM_SELF, _setup());
+}
+
+template <unsigned int DIM>
+Solver<DIM>::Solver(const int uniform_absorber_elems,
+                    const int interior_elems[],
+                    const double interior_domain_lens[]) {
+  for (unsigned int i = 0; i < DIM; ++i) {
+    this->interior_domain_lens[i] = interior_domain_lens[i];
+    this->interior_elems[i] = interior_elems[i];
+    this->absorber_elems_neg[i] = uniform_absorber_elems;
+    this->absorber_elems_pos[i] = uniform_absorber_elems;
+  }
+  PetscCallAbort(PETSC_COMM_SELF, _setup());
+}
+
+template <unsigned int DIM>
+PetscErrorCode Solver<DIM>::read_hdf5_vec(Vec v, const char *hdf5_filename,
+                                          const char *hdf5_groupname,
+                                          const char *vec_int_name) {
+  // Stack variables.
+  DM dm_int = nullptr;
+  Vec v_int = nullptr;
+  PetscViewer hdf5_viewer = nullptr;
+  IS is = nullptr;
+  VecScatter scatter = nullptr;
+
+  PetscFunctionBeginUser;
+  // Create the external DM.
+  if constexpr (DIM == 2) {
+    PetscCall(DMDACreate2d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
+                           DMDA_STENCIL_STAR, interior_elems[0] + 1,
+                           interior_elems[1] + 1, PETSC_DECIDE, PETSC_DECIDE, 1,
+                           1, nullptr, nullptr, &dm_int));
+  }
+  if constexpr (DIM == 3) {
+    PetscCall(DMDACreate3d(
+        PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
+        DMDA_STENCIL_STAR, interior_elems[0] + 1, interior_elems[1] + 1,
+        interior_elems[2] + 1, PETSC_DECIDE, PETSC_DECIDE, PETSC_DECIDE, 1, 1,
+        nullptr, nullptr, nullptr, &dm_int));
+  }
+  PetscCall(DMSetUp(dm_int));
+  PetscCall(DMGetGlobalVector(dm_int, &v_int));
+  PetscCall(
+      PetscObjectSetName(reinterpret_cast<PetscObject>(v_int), vec_int_name));
+
+  // Load the vector into v_int.
+  std::string hdf5_full_filename =
+      std::string(DATA_FOLDERPATH) + std::string(hdf5_filename);
+  PetscCall(PetscViewerHDF5Open(PETSC_COMM_WORLD, hdf5_full_filename.c_str(),
+                                FILE_MODE_READ, &hdf5_viewer));
+  PetscCall(PetscViewerHDF5PushGroup(hdf5_viewer, hdf5_groupname));
+  PetscCall(VecLoad(v_int, hdf5_viewer));
+
+  // Copy the vector.
+  PetscInt dm_int_x_start = 0, dm_int_y_start = 0, dm_int_z_start = 0,
+           dm_int_x_len = 0, dm_int_y_len = 0, dm_int_z_len = 0;
+  PetscCall(DMDAGetCorners(dm_int, &dm_int_x_start, &dm_int_y_start,
+                           &dm_int_z_start, &dm_int_x_len, &dm_int_y_len,
+                           &dm_int_z_len));
+  // To large dm.
+  MatStencil lower{0, dm_int_y_start + absorber_elems_neg[1],
+                   dm_int_x_start + absorber_elems_neg[0], 0};
+  MatStencil upper{0, dm_int_y_start + absorber_elems_neg[1] + dm_int_y_len,
+                   dm_int_x_start + absorber_elems_neg[0] + dm_int_x_len, 0};
+  if constexpr (DIM == 3) {
+    lower.k = dm_int_z_start + absorber_elems_neg[2];
+    upper.k = dm_int_z_start + absorber_elems_neg[2] + dm_int_z_len;
+  }
+  // Warning: Here should be PETSC_TRUE, otherwise the IS will be mismatched.
+  PetscCall(DMDACreatePatchIS(dm, &lower, &upper, &is, PETSC_TRUE));
+
+  PetscCall(VecScatterCreate(v_int, nullptr, v, is, &scatter));
+  // Intialize v by one.
+  PetscCall(VecSet(v, 1.0));
+  PetscCall(VecScatterBegin(scatter, v_int, v, INSERT_VALUES, SCATTER_FORWARD));
+  PetscCall(VecScatterEnd(scatter, v_int, v, INSERT_VALUES, SCATTER_FORWARD));
+
+  // Clean up.
+  PetscCall(VecScatterDestroy(&scatter));
+  PetscCall(ISDestroy(&is));
+  PetscCall(PetscViewerDestroy(&hdf5_viewer));
+  PetscCall(DMRestoreGlobalVector(dm_int, &v_int));
+  PetscCall(DMDestroy(&dm_int));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
 }
 
 template <unsigned int DIM>
@@ -427,14 +543,16 @@ PetscErrorCode Solver<DIM>::save_xdmf_hdf5(Vec v,
   std::string t_GRID_ORIGIN;
   std::string t_GRID_SPACING;
 
-  for (unsigned int i = 0; i < DIM; ++i) {
+  // Save the DMDA vector to .hdf5 file, the dimension of the hdf5 chunk will be
+  // ny x nx x 2 in 2D, nz x ny x nx x 2 in 3D.
+  for (int i = DIM - 1; i >= 0; --i) {
     t_ADITIONAL_INFO +=
-        std::to_string(absorber_elems_neg[i] - 1) + " " +
-        std::to_string(absorber_elems_neg[i] + interior_elems[i]);
+        std::to_string(absorber_elems_neg[i]) + " " +
+        std::to_string(absorber_elems_neg[i] + interior_elems[i] + 1);
     t_GRID_DIMENSIONS += std::to_string(total_dofs[i]);
     t_GRID_ORIGIN += std::to_string(static_cast<float>(-absorber_lens_neg[i]));
     t_GRID_SPACING += std::to_string(static_cast<float>(h[i]));
-    if (i != DIM - 1) {
+    if (i != 0) {
       t_ADITIONAL_INFO += " ";
       t_ADITIONAL_INFO += " ";
       t_GRID_DIMENSIONS += " ";
