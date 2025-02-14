@@ -30,7 +30,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  add_compile_options(-O3)
+  set(CMAKE_CXX_FLAGS_RELEASE "")
+  add_compile_options(-O3 -qopenmp -qmkl -axCORE-AVX512 -std=c++17)
   # message(CMAKE_CXX_FLAGS_RELEASE="${CMAKE_CXX_FLAGS_RELEASE}")
 endif()
 

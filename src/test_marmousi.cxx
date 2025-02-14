@@ -26,14 +26,16 @@ int main(int argc, char **argv) {
 
     // Three configurations.
     int config = 0, freq = 20, pts_per_wavelen = 40;
+    PetscCall(
+        PetscOptionsGetInt(nullptr, nullptr, "-config", &config, nullptr));
     switch (config) {
     case 1:
       freq = 40;
       pts_per_wavelen = 20;
       break;
     case 2:
-      freq = 20;
-      pts_per_wavelen = 40;
+      freq = 80;
+      pts_per_wavelen = 10;
       break;
     default:
       break;
@@ -67,6 +69,7 @@ int main(int argc, char **argv) {
     // Borrow u, now u is v^2
     PetscCall(VecPointwiseMult(u, velocity, velocity));
     // Now A is -Delta, and we need A = omega^2 Id + v^2 Delta,
+    PetscCall(DMCreateMatrix(dm, &A));
     PetscCall(solver.get_laplace_mat(A, omega));
     PetscCall(MatDiagonalScale(A, u, nullptr));
     PetscCall(MatShift(A, -omega * omega));
@@ -81,7 +84,8 @@ int main(int argc, char **argv) {
     PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-use_matex", &use_matex,
                                   nullptr));
     if (use_csp) {
-      ComplexShiftPre csp_ctx = {1.0 + 0.1i, omega, velocity, nullptr, nullptr};
+      ComplexShiftPre csp_ctx = {1.0 + 0.1 * IU, omega, velocity, nullptr,
+                                 nullptr};
       PC pc = nullptr;
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_ComplexShiftPre(pc, &csp_ctx));
@@ -93,6 +97,7 @@ int main(int argc, char **argv) {
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_MatExPre(pc, &matex_ctx));
     }
+    PetscCall(KSPSetFromOptions(ksp));
     PetscCall(KSPSetUp(ksp));
 
     // Get info and solve.

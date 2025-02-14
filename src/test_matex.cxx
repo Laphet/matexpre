@@ -104,7 +104,8 @@ int main(int argc, char **argv) {
     PetscCall(KSPSetType(ksp, KSPFGMRES));
     PetscCall(KSPSetFromOptions(ksp));
     if (use_csp) {
-      ComplexShiftPre csp_ctx = {1.0 + 0.1i, omega, velocity, nullptr, nullptr};
+      ComplexShiftPre csp_ctx = {1.0 + 0.1 * IU, omega, velocity, nullptr,
+                                 nullptr};
       PC pc = nullptr;
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_ComplexShiftPre(pc, &csp_ctx));
