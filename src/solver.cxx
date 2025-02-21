@@ -1,6 +1,13 @@
 #include "solver.h"
+/***
+Only be used for cap.
+#include "gsl/gsl_errno.h"
+#include "gsl/gsl_pow_int.h"
+#include "gsl/gsl_sf_elljac.h"
+***/
 #include "petscdm.h"
 #include "petscdmda.h"
+#include "petscdmdatypes.h"
 #include "petscerror.h"
 #include "petscksp.h"
 #include "petscmat.h"
@@ -61,7 +68,7 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
 
   if constexpr (DIM == 2) {
     PetscCall(DMDACreate2d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
-                           DMDA_STENCIL_STAR, total_dofs[0], total_dofs[1],
+                           DMDA_STENCIL_BOX, total_dofs[0], total_dofs[1],
                            PETSC_DECIDE, PETSC_DECIDE, 1, 1, nullptr, nullptr,
                            &dm));
 
@@ -76,7 +83,7 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
 
   if constexpr (DIM == 3) {
     PetscCall(DMDACreate3d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
-                           DM_BOUNDARY_NONE, DMDA_STENCIL_STAR, total_dofs[0],
+                           DM_BOUNDARY_NONE, DMDA_STENCIL_BOX, total_dofs[0],
                            total_dofs[1], total_dofs[2], PETSC_DECIDE,
                            PETSC_DECIDE, PETSC_DECIDE, 1, 1, nullptr, nullptr,
                            nullptr, &dm));
@@ -149,7 +156,7 @@ PetscErrorCode Solver<DIM>::get_vec_from_func(Vec v, func_ptr f, void *ctx) {
 }
 
 template <unsigned int DIM>
-PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
+PetscErrorCode Solver<DIM>::get_laplace_pml_mat(Mat mat, const double omega) {
   // Stack variables.
   void *acoords = nullptr;
 
@@ -314,23 +321,245 @@ PetscErrorCode Solver<DIM>::get_laplace_mat(Mat mat, const double omega) {
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-template <unsigned int DIM> PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs) {
+template <unsigned int DIM>
+PetscErrorCode Solver<DIM>::get_laplace_abc_mat(Mat mat, const double omega) {
 
   PetscFunctionBeginUser;
 
   if constexpr (DIM == 2) {
-    PetscInt x_center = interior_elems[0] / 2, y_center = interior_elems[1] / 2;
-    PetscCall(get_delta_rhs(rhs, x_center, y_center, 0));
+    double hx = h[0], hy = h[1];
+    for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+      for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind) {
+        MatStencil row = {0, y_ind, x_ind, 0};
+        // Interior points.
+        if (1 <= x_ind && x_ind < total_dofs[0] - 1 && 1 <= y_ind &&
+            y_ind < total_dofs[1] - 1) {
+          MatStencil cols[5] = {{0, y_ind, x_ind, 0},
+                                {0, y_ind, x_ind - 1, 0},
+                                {0, y_ind, x_ind + 1, 0},
+                                {0, y_ind - 1, x_ind, 0},
+                                {0, y_ind + 1, x_ind, 0}};
+          PetscScalar vals[5] = {2.0 / (hx * hx) + 2.0 / (hy * hy),
+                                 -1.0 / (hx * hx), -1.0 / (hx * hx),
+                                 -1.0 / (hy * hy), -1.0 / (hy * hy)};
+          PetscCall(
+              MatSetValuesStencil(mat, 1, &row, 5, cols, vals, INSERT_VALUES));
+        }
+        // Left boundary points.
+        else if (x_ind == 0 && 1 <= y_ind && y_ind < total_dofs[1] - 1) {
+          MatStencil cols[2] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind + 1, 0},
+          };
+          PetscScalar vals[2] = {
+              // 1.0 / (hx * hx) - IU * (omega / hx) / (1 + 0.5 * IU * omega *
+              // hx),
+              1.0 / (hx * hx) - IU * (omega / hx) - 1.0 / (hx * hx),
+              -1.0 / (hx * hx)};
+          PetscCall(
+              MatSetValuesStencil(mat, 1, &row, 2, cols, vals, INSERT_VALUES));
+        }
+        // Right boundary points.
+        else if (x_ind == total_dofs[0] - 1 && 1 <= y_ind &&
+                 y_ind < total_dofs[1] - 1) {
+          MatStencil cols[2] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+          };
+          PetscScalar vals[2] = {
+              // 1.0 / (hx * hx) - IU * (omega / hx) / (1 + 0.5 * IU * omega *
+              // hx),
+              1.0 / (hx * hx) - IU * (omega / hx) - 1.0 / (hx * hx),
+              -1.0 / (hx * hx)};
+          PetscCall(
+              MatSetValuesStencil(mat, 1, &row, 2, cols, vals, INSERT_VALUES));
+        }
+        // Bottom boundary points.
+        else if (1 <= x_ind && x_ind < total_dofs[0] - 1 && y_ind == 0) {
+          MatStencil cols[2] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind + 1, x_ind, 0},
+          };
+          PetscScalar vals[2] = {
+              // 1.0 / (hy * hy) - IU * (omega / hy) / (1 + 0.5 * IU * omega *
+              // hy),
+              1.0 / (hy * hy) - IU * (omega / hy) - 1.0 / (hy * hy),
+              -1.0 / (hy * hy)};
+          PetscCall(
+              MatSetValuesStencil(mat, 1, &row, 2, cols, vals, INSERT_VALUES));
+        }
+        // Top boundary points.
+        else if (1 <= x_ind && x_ind < total_dofs[0] - 1 &&
+                 y_ind == total_dofs[1] - 1) {
+          MatStencil cols[2] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind - 1, x_ind, 0},
+          };
+          PetscScalar vals[2] = {// 1.0 / (hy * hy) - IU * (omega / hy) / (1 +
+                                 // 0.5 * IU * omega * hy),
+                                 1.0 / (hy * hy) - IU * (omega / hy),
+                                 -1.0 / (hy * hy)};
+          PetscCall(
+              MatSetValuesStencil(mat, 1, &row, 2, cols, vals, INSERT_VALUES));
+        }
+        // Conner points
+        else {
+          MatStencil cols[1] = {
+              {0, y_ind, x_ind, 0},
+          };
+          PetscScalar vals[1] = {
+              1.0 / (hx * hx) + 1.0 / (hy * hy),
+          };
+          PetscCall(
+              MatSetValuesStencil(mat, 1, &row, 1, cols, vals, INSERT_VALUES));
+        }
+      }
   }
 
-  if constexpr (DIM == 3) {
-    PetscInt x_center = interior_elems[0] / 2, y_center = interior_elems[1] / 2,
-             z_center = interior_elems[2] / 2;
-    PetscCall(get_delta_rhs(rhs, x_center, y_center, z_center));
-  }
+  // Assemble the matrix.
+  PetscCall(MatAssemblyBegin(mat, MAT_FINAL_ASSEMBLY));
+  PetscCall(MatAssemblyEnd(mat, MAT_FINAL_ASSEMBLY));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
+
+/***
+Not so good...
+template <unsigned int DIM>
+PetscErrorCode Solver<DIM>::get_laplace_cap_mat(Mat mat, const double omega) {
+  const double MAGIC_CONSTANT1_W = 2.5;
+  const double MAGIC_CONSTANT2_W = 1.0 / std::sqrt(2.0);
+  Vec Wxyz[DIM] = {nullptr}, W = nullptr;
+  void *aWxyz[DIM] = {nullptr}, *acoords = nullptr;
+
+  PetscFunctionBeginUser;
+  // Construct the Wxyz vectors.
+  for (unsigned int i = 0; i < DIM; ++i) {
+    PetscCall(DMGetGlobalVector(dm, &Wxyz[i]));
+    PetscCall(VecZeroEntries(Wxyz[i]));
+    PetscCall(DMDAVecGetArray(dm, Wxyz[i], &aWxyz[i]));
+  }
+  PetscCall(DMDAVecGetArray(cdm, vcoords, &acoords));
+
+  if constexpr (DIM == 2) {
+    DMDACoor2d **acoords_2d = reinterpret_cast<DMDACoor2d **>(acoords);
+    PetscScalar **aWxyz_2d[2] = {nullptr, nullptr};
+    for (unsigned int i = 0; i < 2; ++i) {
+      aWxyz_2d[i] = reinterpret_cast<PetscScalar **>(aWxyz[i]);
+    }
+
+    for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+      for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind) {
+        double xy[] = {acoords_2d[y_ind][x_ind].x.real(),
+                       acoords_2d[y_ind][x_ind].y.real()};
+        for (unsigned int i = 0; i < DIM; ++i) {
+          if (xy[i] < 0.0) {
+            PetscReal cn = 0.0, u = 0.0, sn = 0.0, dn = 0.0;
+            u = MAGIC_CONSTANT1_W * std::abs(xy[i]) / absorber_lens_neg[i] *
+                MAGIC_CONSTANT2_W;
+            auto gsl_status =
+                gsl_sf_elljac_e(u, MAGIC_CONSTANT2_W, &sn, &cn, &dn);
+            PetscAssert(gsl_status != GSL_EDOM, PETSC_COMM_WORLD,
+                        "Fail to performing cn(%.5e, %.5e)!\n", u,
+                        MAGIC_CONSTANT2_W);
+            aWxyz_2d[i][y_ind][x_ind] = std::sqrt(1.0 / gsl_pow_4(cn) - 1.0);
+          }
+          if (xy[i] > interior_domain_lens[i]) {
+            PetscReal cn = 0.0, u = 0.0, sn = 0.0, dn = 0.0;
+            u = MAGIC_CONSTANT1_W * std::abs(xy[i] - interior_domain_lens[i]) /
+                absorber_lens_pos[i] * MAGIC_CONSTANT2_W;
+            auto gsl_status =
+                gsl_sf_elljac_e(u, MAGIC_CONSTANT2_W, &sn, &cn, &dn);
+            PetscAssert(gsl_status != GSL_EDOM, PETSC_COMM_WORLD,
+                        "Fail to performing cn(%.5e, %.5e)!\n", u,
+                        MAGIC_CONSTANT2_W);
+            aWxyz_2d[i][y_ind][x_ind] = std::sqrt(1.0 / gsl_pow_4(cn) - 1.0);
+          }
+        }
+      }
+  }
+
+  if constexpr (DIM == 3) {
+    PetscPrintf(PETSC_COMM_WORLD, "Under construction!\n");
+  }
+
+  // Restore the arrays.
+  PetscCall(DMDAVecRestoreArray(cdm, vcoords, &acoords));
+  for (unsigned int i = 0; i < DIM; ++i) {
+    PetscCall(DMDAVecRestoreArray(dm, Wxyz[i], &aWxyz[i]));
+  }
+
+  // Compute Wxyz => 1 - Wxyz / max Wxyz.
+  for (unsigned int i = 0; i < DIM; ++i) {
+    PetscReal WxyzMax = 0.0;
+    PetscCall(VecMax(Wxyz[i], nullptr, &WxyzMax));
+    PetscCall(VecScale(Wxyz[i], -1.0 / WxyzMax));
+    PetscCall(VecShift(Wxyz[i], 1.0));
+  }
+  PetscCall(DMGetGlobalVector(dm, &W));
+  // Because we have zeroed the Wxyz vectors, we do not need to zero the W.
+  PetscCall(VecCopy(Wxyz[0], W));
+  for (unsigned int i = 1; i < DIM; ++i) {
+    PetscCall(VecPointwiseMult(W, Wxyz[i], W));
+  }
+  PetscCall(VecScale(W, -1.0));
+  PetscCall(VecShift(W, 1.0));
+  // W -> -i omega eta W.
+  PetscCall(VecScale(W, -IU * omega * pml_c));
+
+  // Restore the global vectors.
+  for (unsigned int i = 0; i < DIM; ++i) {
+    PetscCall(DMRestoreGlobalVector(dm, &Wxyz[i]));
+  }
+
+  // Construct the matrix.
+  if constexpr (DIM == 2) {
+    double hx = h[0], hy = h[1];
+    for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+      for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind) {
+        MatStencil row = {0, y_ind, x_ind, 0};
+        MatStencil cols[5] = {{0, y_ind, x_ind, 0},
+                              {0, y_ind, x_ind - 1, 0},
+                              {0, y_ind, x_ind + 1, 0},
+                              {0, y_ind - 1, x_ind, 0},
+                              {0, y_ind + 1, x_ind, 0}};
+        PetscScalar vals[5] = {2.0 / (hx * hx) + 2.0 / (hy * hy),
+                               -1.0 / (hx * hx), -1.0 / (hx * hx),
+                               -1.0 / (hy * hy), -1.0 / (hy * hy)};
+        PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[0], &vals[0],
+                                      INSERT_VALUES));
+        if (x_ind - 1 >= 1)
+          PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[1], &vals[1],
+                                        INSERT_VALUES));
+        if (x_ind + 1 < total_dofs[0] - 1)
+          PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[2], &vals[2],
+                                        INSERT_VALUES));
+        if (y_ind - 1 >= 1)
+          PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[3], &vals[3],
+                                        INSERT_VALUES));
+        if (y_ind + 1 < total_dofs[1] - 1)
+          PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[4], &vals[4],
+                                        INSERT_VALUES));
+      }
+  }
+
+  if constexpr (DIM == 3) {
+    PetscPrintf(PETSC_COMM_WORLD, "Under construction!\n");
+  }
+
+  // Assemble the matrix.
+  PetscCall(MatAssemblyBegin(mat, MAT_FINAL_ASSEMBLY));
+  PetscCall(MatAssemblyEnd(mat, MAT_FINAL_ASSEMBLY));
+
+  // Get the matrix -Delta - i omega eta W.
+  PetscCall(MatDiagonalSet(mat, W, ADD_VALUES));
+
+  // Clean up.
+  PetscCall(DMRestoreGlobalVector(dm, &W));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+***/
 
 template <unsigned int DIM>
 PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs, PetscInt i0_offset,
@@ -339,7 +568,7 @@ PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs, PetscInt i0_offset,
   void *arhs = nullptr;
 
   PetscFunctionBeginUser;
-  PetscCall(VecZeroEntries(rhs));
+  // PetscCall(VecZeroEntries(rhs));
   PetscCall(DMDAVecGetArray(dm, rhs, &arhs));
   if constexpr (DIM == 2) {
     PetscScalar **arhs_2d = reinterpret_cast<PetscScalar **>(arhs);
@@ -510,6 +739,14 @@ PetscErrorCode Solver<DIM>::print_info(const double omega) {
   if constexpr (DIM == 3) {
     PetscCall(PetscPrintf(PETSC_COMM_WORLD, ", Nz=(%d, %d).\n",
                           absorber_elems_neg[2], absorber_elems_pos[2]));
+  } else {
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD, ".\n"));
+  }
+
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Grid spacings: hx=%.5f, hy=%.5f",
+                        h[0], h[1]));
+  if constexpr (DIM == 3) {
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD, ", hz=%.5f.\n", h[2]));
   } else {
     PetscCall(PetscPrintf(PETSC_COMM_WORLD, ".\n"));
   }
@@ -723,16 +960,15 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  PetscCall(PetscOptionsGetScalar(nullptr, nullptr, "-csp_shift", &ctx->shift,
-                                  nullptr));
-  PetscCheck(
-      ctx->shift.imag() >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
-      "The shift.im must be non-negative, but got %f.\n", ctx->shift.imag());
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-csp_shift", &ctx->shift,
+                                nullptr));
+  PetscCheck(ctx->shift >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The shift.im must be non-negative, but got %f.\n", ctx->shift);
 
   PetscCall(PCGetOperators(pc, &A, nullptr));
   PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->P_mat));
   PetscCall(get_shifted_velocity_mat(
-      ctx->P_mat, ctx->velocity, ctx->omega * ctx->omega * (1.0 - ctx->shift)));
+      ctx->P_mat, ctx->velocity, ctx->omega * ctx->omega * ctx->shift * IU));
   // Set up the KSP for P^{-1} b = u.
   PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->P_ksp));
   PetscCall(KSPSetOperators(ctx->P_ksp, ctx->P_mat, ctx->P_mat));
@@ -992,6 +1228,127 @@ PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
                         "PCMGSetupViaCoarsen is called with levels=%d.\n",
                         nlevels));
 #endif
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCSetUp_MatExPreVer2(PC pc) {
+  // Stack variables.
+  MatExPreVer2Ctx *ctx = nullptr;
+  Mat A = nullptr;
+  FN fn = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  // Handle CML options.
+  PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_steps", &ctx->steps,
+                               nullptr));
+  PetscCheck(ctx->steps > 0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The steps must be positive, but got %d.\n", ctx->steps);
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-matex_delta_t",
+                                &ctx->delta_t, nullptr));
+  PetscCheck(ctx->delta_t > 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The delta_t must be positive, but got %f.\n", ctx->delta_t);
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-matex_shift", &ctx->shift,
+                                nullptr));
+  PetscCheck(ctx->shift >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The shift must be non-negative, but got %f.\n", ctx->shift);
+
+  // Create the shifted matrix.
+  PetscCall(PCGetOperators(pc, &A, nullptr));
+  PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->P_mat));
+  PetscCall(get_shifted_velocity_mat(
+      ctx->P_mat, ctx->velocity, ctx->omega * ctx->omega * ctx->shift * IU));
+
+  // Create phi0.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi0));
+  PetscCall(MFNSetOperator(ctx->phi0, ctx->P_mat));
+  PetscCall(MFNGetFN(ctx->phi0, &fn));
+  PetscCall(FNSetType(fn, FNEXP));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi0, "phi0_"));
+  PetscCall(MFNSetFromOptions(ctx->phi0));
+  PetscCall(MFNSetUp(ctx->phi0));
+
+  // Create phi1.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi1));
+  PetscCall(MFNSetOperator(ctx->phi1, ctx->P_mat));
+  PetscCall(MFNGetFN(ctx->phi1, &fn));
+  PetscCall(FNSetType(fn, FNPHI));
+  PetscCall(FNPhiSetIndex(fn, 1));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi1, "phi1_"));
+  PetscCall(MFNSetFromOptions(ctx->phi1));
+  PetscCall(MFNSetUp(ctx->phi1));
+
+#ifdef DEBUG
+  double expect_ratio = std::exp(-ctx->delta_t * ctx->shift * ctx->omega *
+                                 ctx->omega * (ctx->steps + 1));
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                        "PCSetUp_MatExPreVer2 is called with delta_t=%.5e, "
+                        "steps=%d, shift=%.5e, x=%.5e.\n",
+                        ctx->delta_t, ctx->steps, ctx->shift, expect_ratio));
+#endif
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCApply_MatExPreVer2(PC pc, Vec in, Vec out) {
+  // Stack variables.
+  MatExPreVer2Ctx *ctx = nullptr;
+  Vec E_in = nullptr, phi_out = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(VecDuplicate(in, &E_in));
+  PetscCall(VecDuplicate(in, &phi_out));
+
+  // phi_out = phi1(in).
+  PetscCall(MFNSolve(ctx->phi1, in, phi_out));
+
+  // Initialize out.
+  // out <- phi_out.
+  PetscCall(VecCopy(phi_out, out));
+  // The main loop.
+  for (auto k = 0; k < ctx->steps; ++k) {
+    // E_in <- phi_out.
+    PetscCall(VecCopy(phi_out, E_in));
+    // phi_out = phi0(E_in).
+    PetscCall(MFNSolve(ctx->phi0, E_in, phi_out));
+    // out = out + phi_out.
+    PetscCall(VecAXPY(out, 1.0, phi_out));
+  }
+
+  PetscCall(VecScale(out, -IU));
+
+  // Clean up.
+  PetscCall(VecDestroy(&phi_out));
+  PetscCall(VecDestroy(&E_in));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCDestroy_MatExPreVer2(PC pc) {
+  // Stack variables.
+  MatExPreVer2Ctx *ctx = nullptr;
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(MatDestroy(&ctx->P_mat));
+  PetscCall(MFNDestroy(&ctx->phi0));
+  PetscCall(MFNDestroy(&ctx->phi1));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCShell_MatExPreVer2(PC pc, MatExPreVer2Ctx *ctx) {
+  PetscFunctionBeginUser;
+
+  PetscCall(PCSetType(pc, PCSHELL));
+  PetscCall(PCShellSetContext(pc, ctx));
+  PetscCall(PCShellSetApply(pc, PCApply_MatExPreVer2));
+  PetscCall(PCShellSetSetUp(pc, PCSetUp_MatExPreVer2));
+  PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPreVer2));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }

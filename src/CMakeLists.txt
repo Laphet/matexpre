@@ -1,7 +1,9 @@
 add_executable(main 
 solver.cxx 
-# test_matex.cxx
-test_marmousi.cxx
+test_matex.cxx
+# test_marmousi.cxx
+# test_marmousi_eig.cxx
+# test_accuracy_2d.cxx
 )
 
 # Manually set the include and library directories for SLEPc.

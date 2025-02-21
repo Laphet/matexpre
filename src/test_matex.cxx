@@ -6,6 +6,7 @@
 #include "petscsys.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
+// #include "slepceps.h"
 #include "solver.h"
 
 std::complex<double> func_two_pole(const double x, const double y,
@@ -35,35 +36,31 @@ std::complex<double> func_four_pole(const double x, const double y,
 int main(int argc, char **argv) {
   PetscCall(SlepcInitialize(&argc, &argv, nullptr, nullptr));
   {
-    Vec velocity = nullptr, source = nullptr, u = nullptr, residual = nullptr;
+    Vec velocity = nullptr, source = nullptr, u = nullptr;
     Mat A = nullptr;
     KSP ksp = nullptr;
     DM dm = nullptr;
 
     PetscInt pts_per_wavelen = 10;
     PetscInt freq = 20;
-    PetscInt pml_width = 1;
+    PetscInt pml_width = 10;
     double omega = -1.0;
-    PetscBool use_csp = PETSC_FALSE, use_matex = PETSC_FALSE;
 
     PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pts_per_wavelen",
                                  &pts_per_wavelen, nullptr));
     PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-freq", &freq, nullptr));
     PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pml_width", &pml_width,
                                  nullptr));
-    PetscCall(
-        PetscOptionsGetBool(nullptr, nullptr, "-use_csp", &use_csp, nullptr));
-    PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-use_matex", &use_matex,
-                                  nullptr));
 
     omega = 2.0 * PETSC_PI * freq;
 
-    Solver<2> solver(freq * pts_per_wavelen, pml_width * pts_per_wavelen);
+    Solver<2> solver(freq * pts_per_wavelen, pml_width);
     // Borrow the DM.
     PetscCall(solver.get_dm(&dm));
     // Create velocity vector.
     PetscCall(DMCreateGlobalVector(dm, &velocity));
     PetscCall(solver.get_vec_from_func(velocity, func_one, nullptr));
+    // PetscCall(solver.get_lumping_mass_dual_vec(velocity));
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(velocity),
                                  "velocity"));
 
@@ -79,19 +76,15 @@ int main(int argc, char **argv) {
     } else {
       PetscCall(solver.get_vec_from_func(source, func_two_pole, &r));
     }
+    // PetscCall(solver.get_zeroed_boundary_vec(source));
     PetscCall(
         PetscObjectSetName(reinterpret_cast<PetscObject>(source), "source"));
 
     // Create matrix.
     PetscCall(DMCreateMatrix(dm, &A));
-    PetscCall(solver.get_laplace_mat(A, omega));
-    // Now, A is -Delta, and we need A = omega^2 Id + v^2 Delta,
-    // such that Im(lambda(A)) >= 0.
-    // Borrow residual.
-    PetscCall(DMGetGlobalVector(dm, &residual));
-    PetscCall(VecPointwiseMult(residual, velocity, velocity));
-    PetscCall(MatDiagonalScale(A, residual, nullptr));
-    PetscCall(MatShift(A, -omega * omega));
+    // PetscCall(solver.get_laplace_cap_mat(A, omega));
+    PetscCall(solver.get_laplace_abc_mat(A, omega));
+    PetscCall(get_shifted_velocity_mat(A, velocity, -omega * omega));
     PetscCall(MatScale(A, -1.0));
     // Create solution vector.
     PetscCall(DMCreateGlobalVector(dm, &u));
@@ -103,9 +96,18 @@ int main(int argc, char **argv) {
     // Set the default ksp solver.
     PetscCall(KSPSetType(ksp, KSPFGMRES));
     PetscCall(KSPSetFromOptions(ksp));
+    PetscBool use_csp = PETSC_FALSE, use_matex = PETSC_FALSE,
+              use_matex_ver2 = PETSC_FALSE;
+
+    PetscCall(
+        PetscOptionsGetBool(nullptr, nullptr, "-use_csp", &use_csp, nullptr));
+    PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-use_matex", &use_matex,
+                                  nullptr));
+    PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-use_matex_ver2",
+                                  &use_matex_ver2, nullptr));
+
     if (use_csp) {
-      ComplexShiftPre csp_ctx = {1.0 + 0.1 * IU, omega, velocity, nullptr,
-                                 nullptr};
+      ComplexShiftPre csp_ctx = {0.1, omega, velocity, nullptr, nullptr};
       PC pc = nullptr;
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_ComplexShiftPre(pc, &csp_ctx));
@@ -116,6 +118,13 @@ int main(int argc, char **argv) {
       PC pc = nullptr;
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_MatExPre(pc, &matex_ctx));
+    }
+    if (use_matex_ver2) {
+      MatExPreVer2Ctx matex_ctx = {1.0 / omega, freq,    0.1,    omega,
+                                   velocity,    nullptr, nullptr};
+      PC pc = nullptr;
+      PetscCall(KSPGetPC(ksp, &pc));
+      PetscCall(PCShell_MatExPreVer2(pc, &matex_ctx));
     }
     PetscCall(KSPSetUp(ksp));
 
@@ -138,24 +147,35 @@ int main(int argc, char **argv) {
                                       surfix.c_str()));
     }
 
-    // Mannually check the resiudal again.
-    PetscInt its = -1;
-    PetscCall(KSPGetIterationNumber(ksp, &its));
-    // PETSc convergence test should be ||P^{-1}(b - A x)|| < rtol ||P^{-1}b||,
-    // which is not residual l2 norm.
-    // This is reasonalbe because P^{-1}b has the same unit as u.
-    PetscCall(DMGetGlobalVector(dm, &residual));
-    PetscCall(MatResidual(A, source, u, residual));
-    PetscReal source_norm = 0.0, residual_norm = 0.0;
-    PetscCall(VecNorm(source, NORM_2, &source_norm));
-    PetscCall(VecNorm(residual, NORM_2, &residual_norm));
-    PetscCall(PetscPrintf(PETSC_COMM_WORLD,
-                          "Number of iterations=%d, relative residual "
-                          "norm=%.5e, source norm=%.5e, residual norm=%.5e.\n",
-                          its, residual_norm / source_norm, source_norm,
-                          residual_norm));
+    {
+      // Set up the eigenvalue problem.
+      // EPS eps = nullptr;
+      // PetscCall(EPSCreate(PETSC_COMM_WORLD, &eps));
+      // PetscCall(EPSSetOperators(eps, A, nullptr));
+      // PetscCall(EPSSetDimensions(eps, 1, PETSC_DEFAULT, PETSC_DEFAULT));
+      // PetscCall(EPSSetWhichEigenpairs(eps, EPS_SMALLEST_IMAGINARY));
+      // PetscCall(EPSSetFromOptions(eps));
+      // PetscCall(EPSSolve(eps));
+      // PetscInt nconv = 0;
+      // PetscCall(EPSGetConverged(eps, &nconv));
+      // PetscPrintf(PETSC_COMM_WORLD, "Number of converged eigenpairs: %d\n",
+      //             nconv);
+      // for (PetscInt i = 0; i < nconv; ++i) {
+      //   PetscScalar kr = 0.0 + 0.0 * IU;
+      //   PetscCall(EPSGetEigenpair(eps, i, &kr, nullptr, nullptr, nullptr));
+      //   auto lambda_r = PetscRealPart(kr);
+      //   auto lambda_i = PetscImaginaryPart(kr);
+      //   PetscPrintf(PETSC_COMM_WORLD, "Eigenvalue %d: %.5e\t+\t%.5ei, ", i,
+      //               lambda_r, lambda_i);
+      //   double scaled_val = 0.0;
+      //   scaled_val = std::abs(lambda_i);
+      //   scaled_val /= omega * omega;
+      //   PetscPrintf(PETSC_COMM_WORLD, "scaled value: %.5e\n", scaled_val);
+      // }
+      // PetscCall(EPSDestroy(&eps));
+    }
 
-    PetscCall(DMRestoreGlobalVector(dm, &residual));
+    // Clean up.
     PetscCall(KSPDestroy(&ksp));
     PetscCall(VecDestroy(&u));
     PetscCall(MatDestroy(&A));

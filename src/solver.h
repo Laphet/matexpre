@@ -63,14 +63,21 @@ public:
 
   PetscErrorCode get_vec_from_func(Vec v, func_ptr f, void *ctx);
 
+  // Load Vec (size of interior_elems) from HDF5 file.
+  // The dataset is in the location hdf5_groupname/vec_int_name.
   PetscErrorCode read_hdf5_vec(Vec v, const char *hdf5_filename,
                                const char *hdf5_groupname,
                                const char *vec_int_name);
 
-  PetscErrorCode get_laplace_mat(Mat A, const double omega);
+  PetscErrorCode get_laplace_pml_mat(Mat A, const double omega);
+
+  PetscErrorCode get_laplace_abc_mat(Mat A, const double omega);
+
+  // PetscErrorCode get_laplace_cap_mat(Mat A, const double omega);
 
   PetscErrorCode get_delta_rhs(Vec rhs);
 
+  // Will not zero the rhs first.
   PetscErrorCode get_delta_rhs(Vec rhs, PetscInt i0_offset, PetscInt j0_offset,
                                PetscInt k0_offset);
 
@@ -119,7 +126,7 @@ std::complex<double> func_gaussian(const double x, const double y,
 // Shift is a complex number.
 struct ComplexShiftPre {
   // P = - (shift) omega^2/v^2 - Delta.
-  PetscScalar shift;
+  double shift;
   double omega;
   Vec velocity;
   Mat P_mat;
@@ -147,3 +154,19 @@ PetscErrorCode PCShell_MatExPre(PC pc, MatExPre *ctx);
 
 // Borrowed from https://petsc.org/main/src/ksp/ksp/tutorials/ex42.c.html.
 PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest);
+
+struct MatExPreVer2Ctx {
+  double delta_t;
+  PetscInt steps;
+  double shift;
+  double omega;
+  Vec velocity;
+  Mat P_mat;
+  MFN phi0;
+  MFN phi1;
+};
+
+extern PetscErrorCode PCSetUp_MatExPreVer2(PC pc);
+extern PetscErrorCode PCApply_MatExPreVer2(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_MatExPreVer2(PC pc);
+extern PetscErrorCode PCShell_MatExPreVer2(PC pc, MatExPreVer2Ctx *ctx);

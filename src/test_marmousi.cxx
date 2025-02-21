@@ -1,5 +1,6 @@
 #include "petscdm.h"
 #include "petscerror.h"
+#include "petscksp.h"
 #include "petscsys.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
@@ -25,26 +26,15 @@ int main(int argc, char **argv) {
     KSP ksp = nullptr;
 
     // Three configurations.
-    int config = 0, freq = 20, pts_per_wavelen = 40;
-    PetscCall(
-        PetscOptionsGetInt(nullptr, nullptr, "-config", &config, nullptr));
-    switch (config) {
-    case 1:
-      freq = 40;
-      pts_per_wavelen = 20;
-      break;
-    case 2:
-      freq = 80;
-      pts_per_wavelen = 10;
-      break;
-    default:
-      break;
-    }
+    int freq = 20, pml_width = 10;
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-freq", &freq, nullptr));
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pml_width", &pml_width,
+                                 nullptr));
 
     // Copy the velocity into the solver dm.
     int marmousi_interior_elems[2] = {MARMOUSI_NX - 1, MARMOUSI_NY - 1};
     double marmousi_interior_domain_lens[2] = {MARMOUSI_LX, MARMOUSI_LY};
-    Solver<2> solver(pts_per_wavelen, marmousi_interior_elems,
+    Solver<2> solver(pml_width, marmousi_interior_elems,
                      marmousi_interior_domain_lens);
 
     // Create the velocity vector.
@@ -66,13 +56,9 @@ int main(int argc, char **argv) {
     double omega = 2.0 * PETSC_PI * freq;
     PetscCall(DMCreateGlobalVector(dm, &u));
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(u), "solution"));
-    // Borrow u, now u is v^2
-    PetscCall(VecPointwiseMult(u, velocity, velocity));
-    // Now A is -Delta, and we need A = omega^2 Id + v^2 Delta,
     PetscCall(DMCreateMatrix(dm, &A));
-    PetscCall(solver.get_laplace_mat(A, omega));
-    PetscCall(MatDiagonalScale(A, u, nullptr));
-    PetscCall(MatShift(A, -omega * omega));
+    PetscCall(solver.get_laplace_abc_mat(A, omega));
+    PetscCall(get_shifted_velocity_mat(A, velocity, -omega * omega));
     PetscCall(MatScale(A, -1.0));
 
     // Solve the system.
@@ -97,6 +83,8 @@ int main(int argc, char **argv) {
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_MatExPre(pc, &matex_ctx));
     }
+    // Set the default ksp solver.
+    PetscCall(KSPSetType(ksp, KSPFGMRES));
     PetscCall(KSPSetFromOptions(ksp));
     PetscCall(KSPSetUp(ksp));
 
@@ -110,8 +98,9 @@ int main(int argc, char **argv) {
     PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-save_file", &save_file,
                                   nullptr));
     if (save_file) {
-      std::string surfix("marmousi-ii-config");
-      surfix += std::to_string(config);
+      std::string surfix("marmousi-ii");
+      surfix += std::string("-f") + std::to_string(freq) + "w" +
+                std::to_string(pml_width);
       PetscCall(solver.save_xdmf_hdf5(velocity, surfix.c_str(), HDF5_FILENAME,
                                       surfix.c_str()));
       PetscCall(solver.save_xdmf_hdf5(u, surfix.c_str(), HDF5_FILENAME,
