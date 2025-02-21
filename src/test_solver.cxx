@@ -61,13 +61,8 @@ int main(int argc, char **argv) {
     PetscCall(solver.get_zeroed_boundary_vec(source));
     // Create matrix.
     PetscCall(DMCreateMatrix(dm, &A));
-    PetscCall(solver.get_laplace_mat(A, omega));
+    PetscCall(solver.get_laplace_pml_mat(A, omega));
     PetscCall(get_shifted_velocity_mat(A, velocity, -omega * omega));
-    // PetscCall(PetscPrintf(
-    //     PETSC_COMM_WORLD,
-    //     "Test -i omega / v^2 Id - Laplace.\n Is this matrix easy to
-    //     solve?\n"));
-    // Create solution vector.
     PetscCall(DMCreateGlobalVector(dm, &u));
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(u), "solution"));
 
