@@ -68,7 +68,7 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
 
   if constexpr (DIM == 2) {
     PetscCall(DMDACreate2d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
-                           DMDA_STENCIL_BOX, total_dofs[0], total_dofs[1],
+                           DMDA_STENCIL_STAR, total_dofs[0], total_dofs[1],
                            PETSC_DECIDE, PETSC_DECIDE, 1, 1, nullptr, nullptr,
                            &dm));
 
@@ -83,7 +83,7 @@ template <unsigned int DIM> PetscErrorCode Solver<DIM>::_setup() {
 
   if constexpr (DIM == 3) {
     PetscCall(DMDACreate3d(PETSC_COMM_WORLD, DM_BOUNDARY_NONE, DM_BOUNDARY_NONE,
-                           DM_BOUNDARY_NONE, DMDA_STENCIL_BOX, total_dofs[0],
+                           DM_BOUNDARY_NONE, DMDA_STENCIL_STAR, total_dofs[0],
                            total_dofs[1], total_dofs[2], PETSC_DECIDE,
                            PETSC_DECIDE, PETSC_DECIDE, 1, 1, nullptr, nullptr,
                            nullptr, &dm));
@@ -178,7 +178,7 @@ PetscErrorCode Solver<DIM>::get_laplace_pml_mat(Mat mat, const double omega) {
             (get_g(x, omega, pml_c, absorber_lens_neg[0],
                    interior_domain_lens[0], absorber_lens_pos[0]) *
              get_g(x_mhalf, omega, pml_c, absorber_lens_neg[0],
-                   interior_domain_lens[0], absorber_elems_pos[0]));
+                   interior_domain_lens[0], absorber_lens_pos[0]));
         std::complex<double> temp_b =
             1.0 / (hx * hx) /
             (get_g(x, omega, pml_c, absorber_lens_neg[0],
@@ -209,19 +209,12 @@ PetscErrorCode Solver<DIM>::get_laplace_pml_mat(Mat mat, const double omega) {
         // All diagonal elements are inserted, including boundary points.
         PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[0], &vals[0],
                                       INSERT_VALUES));
-        // Points next to the boundary points need special treatments.
-        if (x_ind - 1 >= 1)
-          PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[1], &vals[1],
+        // All interior points.
+        if (1 <= x_ind && x_ind < total_dofs[0] - 1 && 1 <= y_ind &&
+            y_ind < total_dofs[1] - 1) {
+          PetscCall(MatSetValuesStencil(mat, 1, &row, 4, &cols[1], &vals[1],
                                         INSERT_VALUES));
-        if (x_ind + 1 < total_dofs[0] - 1)
-          PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[2], &vals[2],
-                                        INSERT_VALUES));
-        if (y_ind - 1 >= 1)
-          PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[3], &vals[3],
-                                        INSERT_VALUES));
-        if (y_ind + 1 < total_dofs[1] - 1)
-          PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[4], &vals[4],
-                                        INSERT_VALUES));
+        }
       }
   }
 
@@ -240,9 +233,9 @@ PetscErrorCode Solver<DIM>::get_laplace_pml_mat(Mat mat, const double omega) {
           std::complex<double> temp_a =
               1.0 / (hx * hx) /
               (get_g(x, omega, pml_c, absorber_lens_neg[0],
-                     interior_domain_lens[0], absorber_elems_pos[0]) *
+                     interior_domain_lens[0], absorber_lens_pos[0]) *
                get_g(x_mhalf, omega, pml_c, absorber_lens_neg[0],
-                     interior_domain_lens[0], absorber_elems_pos[0]));
+                     interior_domain_lens[0], absorber_lens_pos[0]));
           std::complex<double> temp_b =
               1.0 / (hx * hx) /
               (get_g(x, omega, pml_c, absorber_lens_neg[0],
@@ -291,24 +284,14 @@ PetscErrorCode Solver<DIM>::get_laplace_pml_mat(Mat mat, const double omega) {
 
           PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[0], &vals[0],
                                         INSERT_VALUES));
-          if (x_ind - 1 >= 1)
-            PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[1], &vals[1],
+
+          // All interior points.
+          if (1 <= x_ind && x_ind < total_dofs[0] - 1 && 1 <= y_ind &&
+              y_ind < total_dofs[1] - 1 && 1 <= z_ind &&
+              z_ind < total_dofs[2] - 1) {
+            PetscCall(MatSetValuesStencil(mat, 1, &row, 6, &cols[1], &vals[1],
                                           INSERT_VALUES));
-          if (x_ind + 1 < total_dofs[0] - 1)
-            PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[2], &vals[2],
-                                          INSERT_VALUES));
-          if (y_ind - 1 >= 1)
-            PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[3], &vals[3],
-                                          INSERT_VALUES));
-          if (y_ind + 1 < total_dofs[1] - 1)
-            PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[4], &vals[4],
-                                          INSERT_VALUES));
-          if (z_ind - 1 >= 1)
-            PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[5], &vals[5],
-                                          INSERT_VALUES));
-          if (z_ind + 1 < total_dofs[2] - 1)
-            PetscCall(MatSetValuesStencil(mat, 1, &row, 1, &cols[6], &vals[6],
-                                          INSERT_VALUES));
+          }
         }
   }
 
@@ -334,84 +317,900 @@ PetscErrorCode Solver<DIM>::get_laplace_abc_mat(Mat mat, const double omega) {
         // Interior points.
         if (1 <= x_ind && x_ind < total_dofs[0] - 1 && 1 <= y_ind &&
             y_ind < total_dofs[1] - 1) {
-          MatStencil cols[5] = {{0, y_ind, x_ind, 0},
-                                {0, y_ind, x_ind - 1, 0},
-                                {0, y_ind, x_ind + 1, 0},
-                                {0, y_ind - 1, x_ind, 0},
-                                {0, y_ind + 1, x_ind, 0}};
-          PetscScalar vals[5] = {2.0 / (hx * hx) + 2.0 / (hy * hy),
-                                 -1.0 / (hx * hx), -1.0 / (hx * hx),
-                                 -1.0 / (hy * hy), -1.0 / (hy * hy)};
-          PetscCall(
-              MatSetValuesStencil(mat, 1, &row, 5, cols, vals, INSERT_VALUES));
+          constexpr std::size_t NUM_STEN = 5;
+          MatStencil cols[NUM_STEN] = {{0, y_ind, x_ind, 0},
+                                       {0, y_ind, x_ind - 1, 0},
+                                       {0, y_ind, x_ind + 1, 0},
+                                       {0, y_ind - 1, x_ind, 0},
+                                       {0, y_ind + 1, x_ind, 0}};
+          PetscScalar vals[NUM_STEN] = {2.0 / (hx * hx) + 2.0 / (hy * hy),
+                                        -1.0 / (hx * hx), -1.0 / (hx * hx),
+                                        -1.0 / (hy * hy), -1.0 / (hy * hy)};
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
         }
         // Left boundary points.
         else if (x_ind == 0 && 1 <= y_ind && y_ind < total_dofs[1] - 1) {
-          MatStencil cols[2] = {
+          constexpr std::size_t NUM_STEN = 4;
+          MatStencil cols[NUM_STEN] = {
               {0, y_ind, x_ind, 0},
               {0, y_ind, x_ind + 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+              {0, y_ind + 1, x_ind, 0},
           };
-          PetscScalar vals[2] = {
-              // 1.0 / (hx * hx) - IU * (omega / hx) / (1 + 0.5 * IU * omega *
-              // hx),
-              1.0 / (hx * hx) - IU * (omega / hx) - 1.0 / (hx * hx),
-              -1.0 / (hx * hx)};
-          PetscCall(
-              MatSetValuesStencil(mat, 1, &row, 2, cols, vals, INSERT_VALUES));
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx,
+              -2.0 / (hx * hx),
+              -1.0 / (hy * hy),
+              -1.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
         }
         // Right boundary points.
         else if (x_ind == total_dofs[0] - 1 && 1 <= y_ind &&
                  y_ind < total_dofs[1] - 1) {
-          MatStencil cols[2] = {
+          constexpr std::size_t NUM_STEN = 4;
+          MatStencil cols[NUM_STEN] = {
               {0, y_ind, x_ind, 0},
               {0, y_ind, x_ind - 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+              {0, y_ind + 1, x_ind, 0},
           };
-          PetscScalar vals[2] = {
-              // 1.0 / (hx * hx) - IU * (omega / hx) / (1 + 0.5 * IU * omega *
-              // hx),
-              1.0 / (hx * hx) - IU * (omega / hx) - 1.0 / (hx * hx),
-              -1.0 / (hx * hx)};
-          PetscCall(
-              MatSetValuesStencil(mat, 1, &row, 2, cols, vals, INSERT_VALUES));
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx,
+              -2.0 / (hx * hx),
+              -1.0 / (hy * hy),
+              -1.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
         }
         // Bottom boundary points.
         else if (1 <= x_ind && x_ind < total_dofs[0] - 1 && y_ind == 0) {
-          MatStencil cols[2] = {
+          constexpr std::size_t NUM_STEN = 4;
+          MatStencil cols[NUM_STEN] = {
               {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind, x_ind + 1, 0},
               {0, y_ind + 1, x_ind, 0},
           };
-          PetscScalar vals[2] = {
-              // 1.0 / (hy * hy) - IU * (omega / hy) / (1 + 0.5 * IU * omega *
-              // hy),
-              1.0 / (hy * hy) - IU * (omega / hy) - 1.0 / (hy * hy),
-              -1.0 / (hy * hy)};
-          PetscCall(
-              MatSetValuesStencil(mat, 1, &row, 2, cols, vals, INSERT_VALUES));
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hy,
+              -1.0 / (hx * hx),
+              -1.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
         }
         // Top boundary points.
         else if (1 <= x_ind && x_ind < total_dofs[0] - 1 &&
                  y_ind == total_dofs[1] - 1) {
-          MatStencil cols[2] = {
+          constexpr std::size_t NUM_STEN = 4;
+          MatStencil cols[NUM_STEN] = {
               {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind, x_ind + 1, 0},
               {0, y_ind - 1, x_ind, 0},
           };
-          PetscScalar vals[2] = {// 1.0 / (hy * hy) - IU * (omega / hy) / (1 +
-                                 // 0.5 * IU * omega * hy),
-                                 1.0 / (hy * hy) - IU * (omega / hy),
-                                 -1.0 / (hy * hy)};
-          PetscCall(
-              MatSetValuesStencil(mat, 1, &row, 2, cols, vals, INSERT_VALUES));
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hy,
+              -1.0 / (hx * hx),
+              -1.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
         }
-        // Conner points
-        else {
-          MatStencil cols[1] = {
+        // -- Conner points
+        else if (x_ind == 0 && y_ind == 0) {
+          constexpr std::size_t NUM_STEN = 3;
+          MatStencil cols[NUM_STEN] = {
               {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind + 1, 0},
+              {0, y_ind + 1, x_ind, 0},
           };
-          PetscScalar vals[1] = {
-              1.0 / (hx * hx) + 1.0 / (hy * hy),
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx -
+                  2.0 * IU * omega / hy,
+              -2.0 / (hx * hx),
+              -2.0 / (hy * hy),
           };
-          PetscCall(
-              MatSetValuesStencil(mat, 1, &row, 1, cols, vals, INSERT_VALUES));
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // +- Conner points
+        else if (x_ind == total_dofs[0] - 1 && y_ind == 0) {
+          constexpr std::size_t NUM_STEN = 3;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind + 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx -
+                  2.0 * IU * omega / hy,
+              -2.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // -+ Conner points
+        else if (x_ind == 0 && y_ind == total_dofs[1] - 1) {
+          constexpr std::size_t NUM_STEN = 3;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind + 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx -
+                  2.0 * IU * omega / hy,
+              -2.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // ++ Conner points
+        else if (x_ind == total_dofs[0] - 1 && y_ind == total_dofs[1] - 1) {
+          constexpr std::size_t NUM_STEN = 3;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx -
+                  2.0 * IU * omega / hy,
+              -2.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+      }
+  }
+
+  if constexpr (DIM == 3) {
+    double hx = h[0], hy = h[1], hz = h[2];
+    for (PetscInt z_ind = z_start; z_ind < z_start + z_len; ++z_ind)
+      for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+        for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind) {
+          MatStencil row = {z_ind, y_ind, x_ind, 0};
+          // Interior points.
+          if (1 <= x_ind && x_ind < total_dofs[0] - 1 && 1 <= y_ind &&
+              y_ind < total_dofs[1] - 1 && 1 <= z_ind &&
+              z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 7;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind, y_ind + 1, x_ind, 0}, {z_ind - 1, y_ind, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {2.0 / (hx * hx) + 2.0 / (hy * hy) +
+                                              2.0 / (hz * hz),
+                                          -1.0 / (hx * hx),
+                                          -1.0 / (hx * hx),
+                                          -1.0 / (hy * hy),
+                                          -1.0 / (hy * hy),
+                                          -1.0 / (hz * hz),
+                                          -1.0 / (hz * hz)};
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+
+          // Left boundary points.
+          else if (x_ind == 0 && 1 <= y_ind && y_ind < total_dofs[1] - 1 &&
+                   1 <= z_ind && z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 6;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0}, {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0}, {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx,
+                -2.0 / (hx * hx),
+                -1.0 / (hy * hy),
+                -1.0 / (hy * hy),
+                -1.0 / (hz * hz),
+                -1.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // Right boundary points.
+          else if (x_ind == total_dofs[0] - 1 && 1 <= y_ind &&
+                   y_ind < total_dofs[1] - 1 && 1 <= z_ind &&
+                   z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 6;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0}, {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0}, {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx,
+                -2.0 / (hx * hx),
+                -1.0 / (hy * hy),
+                -1.0 / (hy * hy),
+                -1.0 / (hz * hz),
+                -1.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // Bottom boundary points.
+          else if (1 <= x_ind && x_ind < total_dofs[0] - 1 && y_ind == 0 &&
+                   1 <= z_ind && z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 6;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0}, {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hy,
+                -1.0 / (hx * hx),
+                -1.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -1.0 / (hz * hz),
+                -1.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // Top boundary points.
+          else if (1 <= x_ind && x_ind < total_dofs[0] - 1 &&
+                   y_ind == total_dofs[1] - 1 && 1 <= z_ind &&
+                   z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 6;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0}, {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hy,
+                -1.0 / (hx * hx),
+                -1.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -1.0 / (hz * hz),
+                -1.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // Front boundary points.
+          else if (1 <= x_ind && x_ind < total_dofs[0] - 1 && 1 <= y_ind &&
+                   y_ind < total_dofs[1] - 1 && z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 6;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind, y_ind + 1, x_ind, 0}, {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hz,
+                -1.0 / (hx * hx),
+                -1.0 / (hx * hx),
+                -1.0 / (hy * hy),
+                -1.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // Back boundary points.
+          else if (1 <= x_ind && x_ind < total_dofs[0] - 1 && 1 <= y_ind &&
+                   y_ind < total_dofs[1] - 1 && z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 6;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind, y_ind + 1, x_ind, 0}, {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hz,
+                -1.0 / (hx * hx),
+                -1.0 / (hx * hx),
+                -1.0 / (hy * hy),
+                -1.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+
+          // --0 edge points.
+          else if (x_ind == 0 && y_ind == 0 && 1 <= z_ind &&
+                   z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind + 1, x_ind, 0}, {z_ind - 1, y_ind, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -1.0 / (hz * hz),
+                -1.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // +-0 edge points.
+          else if (x_ind == total_dofs[0] - 1 && y_ind == 0 && 1 <= z_ind &&
+                   z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind + 1, x_ind, 0}, {z_ind - 1, y_ind, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -1.0 / (hz * hz),
+                -1.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // -+0 edge points.
+          else if (x_ind == 0 && y_ind == total_dofs[1] - 1 && 1 <= z_ind &&
+                   z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0}, {z_ind - 1, y_ind, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -1.0 / (hz * hz),
+                -1.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // ++0 edge points.
+          else if (x_ind == total_dofs[0] - 1 && y_ind == total_dofs[1] - 1 &&
+                   1 <= z_ind && z_ind < total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0}, {z_ind - 1, y_ind, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -1.0 / (hz * hz),
+                -1.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // -0- edge points.
+          else if (x_ind == 0 && 1 <= y_ind && y_ind < total_dofs[1] - 1 &&
+                   z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind + 1, x_ind, 0}, {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -1.0 / (hy * hy),
+                -1.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // +0- edge points.
+          else if (x_ind == total_dofs[0] - 1 && 1 <= y_ind &&
+                   y_ind < total_dofs[1] - 1 && z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind + 1, x_ind, 0}, {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -1.0 / (hy * hy),
+                -1.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // -0+ edge points.
+          else if (x_ind == 0 && 1 <= y_ind && y_ind < total_dofs[1] - 1 &&
+                   z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0}, {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -1.0 / (hy * hy),
+                -1.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // +0+ edge points.
+          else if (x_ind == total_dofs[0] - 1 && 1 <= y_ind &&
+                   y_ind < total_dofs[1] - 1 && z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0}, {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -1.0 / (hy * hy),
+                -1.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // 0-- edge points.
+          else if (1 <= x_ind && x_ind < total_dofs[0] - 1 && y_ind == 0 &&
+                   z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hy - 2.0 * IU * omega / hz,
+                -1.0 / (hx * hx),
+                -1.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // 0+- edge points.
+          else if (1 <= x_ind && x_ind < total_dofs[0] - 1 &&
+                   y_ind == total_dofs[1] - 1 && z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hy - 2.0 * IU * omega / hz,
+                -1.0 / (hx * hx),
+                -1.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // 0-+ edge points.
+          else if (1 <= x_ind && x_ind < total_dofs[0] - 1 && y_ind == 0 &&
+                   z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hy - 2.0 * IU * omega / hz,
+                -1.0 / (hx * hx),
+                -1.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // 0++ edge points.
+          else if (1 <= x_ind && x_ind < total_dofs[0] - 1 &&
+                   y_ind == total_dofs[1] - 1 && z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 5;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},     {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind, x_ind + 1, 0}, {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hy - 2.0 * IU * omega / hz,
+                -1.0 / (hx * hx),
+                -1.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+
+          // --- Conner point.
+          else if (x_ind == 0 && y_ind == 0 && z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 4;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},
+                {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy -
+                    2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // +-- Conner point.
+          else if (x_ind == total_dofs[0] - 1 && y_ind == 0 && z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 4;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},
+                {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy -
+                    2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // -+- Conner point.
+          else if (x_ind == 0 && y_ind == total_dofs[1] - 1 && z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 4;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},
+                {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy -
+                    2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // ++- Conner point.
+          else if (x_ind == total_dofs[0] - 1 && y_ind == total_dofs[1] - 1 &&
+                   z_ind == 0) {
+            constexpr std::size_t NUM_STEN = 4;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},
+                {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind + 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy -
+                    2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // --+ Conner point.
+          else if (x_ind == 0 && y_ind == 0 && z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 4;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},
+                {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy -
+                    2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // +-+ Conner point.
+          else if (x_ind == total_dofs[0] - 1 && y_ind == 0 &&
+                   z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 4;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},
+                {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind + 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy -
+                    2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // -++ Conner point.
+          else if (x_ind == 0 && y_ind == total_dofs[1] - 1 &&
+                   z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 4;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},
+                {z_ind, y_ind, x_ind + 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy -
+                    2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+          // +++ Conner point.
+          else if (x_ind == total_dofs[0] - 1 && y_ind == total_dofs[1] - 1 &&
+                   z_ind == total_dofs[2] - 1) {
+            constexpr std::size_t NUM_STEN = 4;
+            MatStencil cols[NUM_STEN] = {
+                {z_ind, y_ind, x_ind, 0},
+                {z_ind, y_ind, x_ind - 1, 0},
+                {z_ind, y_ind - 1, x_ind, 0},
+                {z_ind - 1, y_ind, x_ind, 0},
+            };
+            PetscScalar vals[NUM_STEN] = {
+                2.0 / (hx * hx) + 2.0 / (hy * hy) + 2.0 / (hz * hz) -
+                    2.0 * IU * omega / hx - 2.0 * IU * omega / hy -
+                    2.0 * IU * omega / hz,
+                -2.0 / (hx * hx),
+                -2.0 / (hy * hy),
+                -2.0 / (hz * hz),
+            };
+            PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                          INSERT_VALUES));
+          }
+        }
+  }
+  // Assemble the matrix.
+  PetscCall(MatAssemblyBegin(mat, MAT_FINAL_ASSEMBLY));
+  PetscCall(MatAssemblyEnd(mat, MAT_FINAL_ASSEMBLY));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+template <unsigned int DIM>
+PetscErrorCode Solver<DIM>::get_laplace_abc_bzn_mat(Mat mat,
+                                                    const double omega) {
+  PetscFunctionBeginUser;
+
+  if constexpr (DIM == 2) {
+    double hx = h[0], hy = h[1];
+    for (PetscInt y_ind = y_start; y_ind < y_start + y_len; ++y_ind)
+      for (PetscInt x_ind = x_start; x_ind < x_start + x_len; ++x_ind) {
+        MatStencil row = {0, y_ind, x_ind, 0};
+        // Interior points.
+        if (1 <= x_ind && x_ind < total_dofs[0] - 1 && 1 <= y_ind &&
+            y_ind < total_dofs[1] - 1) {
+          constexpr std::size_t NUM_STEN = 5;
+          MatStencil cols[NUM_STEN] = {{0, y_ind, x_ind, 0},
+                                       {0, y_ind, x_ind - 1, 0},
+                                       {0, y_ind, x_ind + 1, 0},
+                                       {0, y_ind - 1, x_ind, 0},
+                                       {0, y_ind + 1, x_ind, 0}};
+          PetscScalar vals[NUM_STEN] = {2.0 / (hx * hx) + 2.0 / (hy * hy),
+                                        -1.0 / (hx * hx), -1.0 / (hx * hx),
+                                        -1.0 / (hy * hy), -1.0 / (hy * hy)};
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // Left boundary points.
+        else if (x_ind == 0 && 1 <= y_ind && y_ind < total_dofs[1] - 1) {
+          constexpr std::size_t NUM_STEN = 4;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind + 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+              {0, y_ind + 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx,
+              -2.0 / (hx * hx),
+              -1.0 / (hy * hy),
+              -1.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // Right boundary points.
+        else if (x_ind == total_dofs[0] - 1 && 1 <= y_ind &&
+                 y_ind < total_dofs[1] - 1) {
+          constexpr std::size_t NUM_STEN = 4;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+              {0, y_ind + 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx,
+              -2.0 / (hx * hx),
+              -1.0 / (hy * hy),
+              -1.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // Bottom boundary points.
+        // Modification shows here.
+        else if (1 <= x_ind && x_ind < total_dofs[0] - 1 && y_ind == 0) {
+          constexpr std::size_t NUM_STEN = 4;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind, x_ind + 1, 0},
+              {0, y_ind + 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy),
+              -1.0 / (hx * hx),
+              -1.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // Top boundary points.
+        else if (1 <= x_ind && x_ind < total_dofs[0] - 1 &&
+                 y_ind == total_dofs[1] - 1) {
+          constexpr std::size_t NUM_STEN = 4;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind, x_ind + 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hy,
+              -1.0 / (hx * hx),
+              -1.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // -- Conner points
+        else if (x_ind == 0 && y_ind == 0) {
+          constexpr std::size_t NUM_STEN = 3;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind + 1, 0},
+              {0, y_ind + 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx,
+              -2.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // +- Conner points
+        else if (x_ind == total_dofs[0] - 1 && y_ind == 0) {
+          constexpr std::size_t NUM_STEN = 3;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind + 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx,
+              -2.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // -+ Conner points
+        else if (x_ind == 0 && y_ind == total_dofs[1] - 1) {
+          constexpr std::size_t NUM_STEN = 3;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind + 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx -
+                  2.0 * IU * omega / hy,
+              -2.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
+        }
+        // ++ Conner points
+        else if (x_ind == total_dofs[0] - 1 && y_ind == total_dofs[1] - 1) {
+          constexpr std::size_t NUM_STEN = 3;
+          MatStencil cols[NUM_STEN] = {
+              {0, y_ind, x_ind, 0},
+              {0, y_ind, x_ind - 1, 0},
+              {0, y_ind - 1, x_ind, 0},
+          };
+          PetscScalar vals[NUM_STEN] = {
+              2.0 / (hx * hx) + 2.0 / (hy * hy) - 2.0 * IU * omega / hx -
+                  2.0 * IU * omega / hy,
+              -2.0 / (hx * hx),
+              -2.0 / (hy * hy),
+          };
+          PetscCall(MatSetValuesStencil(mat, 1, &row, NUM_STEN, cols, vals,
+                                        INSERT_VALUES));
         }
       }
   }
@@ -422,7 +1221,6 @@ PetscErrorCode Solver<DIM>::get_laplace_abc_mat(Mat mat, const double omega) {
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
-
 /***
 Not so good...
 template <unsigned int DIM>
@@ -596,6 +1394,19 @@ PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs, PetscInt i0_offset,
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+template <unsigned int DIM> PetscErrorCode Solver<DIM>::get_delta_rhs(Vec rhs) {
+  PetscFunctionBeginUser;
+  PetscInt i0_offset = 0, j0_offset = 0, k0_offset = 0;
+  i0_offset = interior_elems[0] / 2;
+  j0_offset = interior_elems[1] / 2;
+  if constexpr (DIM == 3) {
+    k0_offset = interior_elems[2] / 2;
+  }
+  PetscCall(get_delta_rhs(rhs, i0_offset, j0_offset, k0_offset));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 template <unsigned int DIM> Solver<DIM>::~Solver() {
   // According to the PETSc manual, it is prefered to use PetscCallAbort.
   PetscCallAbort(PETSC_COMM_SELF, DMDestroy(&dm));
@@ -640,7 +1451,8 @@ Solver<DIM>::Solver(const int uniform_absorber_elems,
 template <unsigned int DIM>
 PetscErrorCode Solver<DIM>::read_hdf5_vec(Vec v, const char *hdf5_filename,
                                           const char *hdf5_groupname,
-                                          const char *vec_int_name) {
+                                          const char *vec_int_name,
+                                          const PetscReal scale) {
   // Stack variables.
   DM dm_int = nullptr;
   Vec v_int = nullptr;
@@ -675,6 +1487,9 @@ PetscErrorCode Solver<DIM>::read_hdf5_vec(Vec v, const char *hdf5_filename,
                                 FILE_MODE_READ, &hdf5_viewer));
   PetscCall(PetscViewerHDF5PushGroup(hdf5_viewer, hdf5_groupname));
   PetscCall(VecLoad(v_int, hdf5_viewer));
+
+  // Scale the vector.
+  PetscCall(VecScale(v_int, scale));
 
   // Copy the vector.
   PetscInt dm_int_x_start = 0, dm_int_y_start = 0, dm_int_z_start = 0,
@@ -963,7 +1778,7 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-csp_shift", &ctx->shift,
                                 nullptr));
   PetscCheck(ctx->shift >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
-             "The shift.im must be non-negative, but got %f.\n", ctx->shift);
+             "The shift must be non-negative, but got %f.\n", ctx->shift);
 
   PetscCall(PCGetOperators(pc, &A, nullptr));
   PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->P_mat));
@@ -974,7 +1789,8 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   PetscCall(KSPSetOperators(ctx->P_ksp, ctx->P_mat, ctx->P_mat));
   PetscCall(KSPGetPC(ctx->P_ksp, &P_pc));
   // Set default KSP type.
-  PetscCall(KSPSetType(ctx->P_ksp, KSPBCGS));
+  // PetscCall(KSPSetType(ctx->P_ksp, KSPBCGS));
+  PetscCall(KSPSetType(ctx->P_ksp, KSPPREONLY));
   // Allow CML options.
   PetscCall(KSPSetOptionsPrefix(ctx->P_ksp, "csp_"));
   // KSPSetFromOptions will call PCSetFromOptions.
@@ -989,6 +1805,25 @@ extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc) {
   PetscCall(VecGetDM(ctx->velocity, &dm));
   if (use_pcmg) {
     PetscCall(PCMGSetupViaCoarsen(P_pc, dm));
+    KSP ksp_coarsest = nullptr;
+    PC pc_coarsest = nullptr;
+    PetscCall(PCMGGetCoarseSolve(P_pc, &ksp_coarsest));
+    PetscCall(KSPSetType(ksp_coarsest, KSPPREONLY));
+    PetscCall(KSPGetPC(ksp_coarsest, &pc_coarsest));
+    // Set the coarse pc as the shell pc.
+    PetscCall(PCSetType(pc_coarsest, PCSHELL));
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-matex_steps",
+                                 &ctx->matex_ctx.steps, nullptr));
+    PetscCheck(
+        ctx->matex_ctx.steps > 0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+        "The steps must be positive, but got %d.\n", ctx->matex_ctx.steps);
+    PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-matex_delta_t",
+                                  &ctx->matex_ctx.delta_t, nullptr));
+    PetscCheck(ctx->matex_ctx.delta_t > 0.0, PETSC_COMM_WORLD,
+               PETSC_ERR_ARG_OUTOFRANGE,
+               "The delta_t must be positive, but got %f.\n",
+               ctx->matex_ctx.delta_t);
+    PetscCall(PCShell_MatExPreVer4(pc_coarsest, &ctx->matex_ctx));
   }
   // KSPSetUp setup will call PCSetUp.
   PetscCall(KSPSetUp(ctx->P_ksp));
@@ -1036,6 +1871,83 @@ PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx) {
   PetscCall(PCShellSetApply(pc, PCApply_ComplexShiftPre));
   PetscCall(PCShellSetSetUp(pc, PCSetUp_ComplexShiftPre));
   PetscCall(PCShellSetDestroy(pc, PCDestroy_ComplexShiftPre));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
+  // Stack variables.
+  std::vector<DM> da_hierarchy;
+
+  PetscFunctionBeginUser;
+  PetscInt nlevels = 2;
+  PetscCall(PCMGGetLevels(pc, &nlevels));
+  PetscCheck(nlevels >= 2, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The number of levels must be at least 2, but got %d.\n", nlevels);
+
+  // Finest is at 0.
+  da_hierarchy.resize(nlevels);
+  da_hierarchy[0] = da_finest;
+  PetscCall(DMCoarsenHierarchy(da_hierarchy[0], nlevels - 1, &da_hierarchy[1]));
+
+  PetscCall(PCMGSetLevels(pc, nlevels, nullptr));
+  PetscCall(PCMGSetType(pc, PC_MG_MULTIPLICATIVE));
+  PetscCall(PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH));
+  PetscCall(PCMGSetNumberSmooth(pc, 15));
+
+  // Reverse the da_hierarchy, now the finest is at the end.
+  std::reverse(da_hierarchy.begin(), da_hierarchy.end());
+
+  // Get dimension.
+  PetscInt dim = 0;
+  PetscCall(DMDAGetInfo(da_finest, &dim, nullptr, nullptr, nullptr, nullptr,
+                        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                        nullptr, nullptr));
+  PetscScalar scale = 0.0;
+  if (dim == 2) {
+    scale = 0.5 * 0.5;
+  } else {
+    scale = 0.5 * 0.5 * 0.5;
+  }
+
+  for (auto k = 1; k < nlevels; ++k) {
+    Mat restriction = nullptr, interpolation = nullptr;
+    PetscCall(DMCreateInterpolation(da_hierarchy[k - 1], da_hierarchy[k],
+                                    &interpolation, NULL));
+    PetscCall(PCMGSetInterpolation(pc, k, interpolation));
+
+    PetscCall(MatTranspose(interpolation, MAT_INITIAL_MATRIX, &restriction));
+    PetscCall(MatScale(restriction, scale));
+    PetscCall(PCMGSetRestriction(pc, k, restriction));
+
+    PetscCall(MatDestroy(&restriction));
+    PetscCall(MatDestroy(&interpolation));
+  }
+
+  // Do not destroy the finest level.
+  for (auto k = 0; k < nlevels - 1; ++k) {
+    PetscCall(DMDestroy(&da_hierarchy[k]));
+  }
+
+  // Define default solvers for each level.
+  // It seems that CML options will supercede all things below.
+  KSP ksp_each_level = nullptr;
+  PC pc_each_level = nullptr;
+  // Do not set the coarse solver for now.
+  for (auto k = 1; k < nlevels; ++k) {
+    PetscCall(PCMGGetSmoother(pc, k, &ksp_each_level));
+    PetscCall(KSPSetType(ksp_each_level, KSPGMRES));
+    PetscCall(KSPGetPC(ksp_each_level, &pc_each_level));
+    // PetscCall(PCSetType(pc_each_level, PCBJACOBI));
+    // PetscCall(PCSetType(pc_each_level, PCJACOBI));
+    PetscCall(PCSetType(pc_each_level, PCNONE));
+  }
+
+  // #ifdef DEBUG
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                        "PCMGSetupViaCoarsen is called with levels=%d.\n",
+                        nlevels));
+  // #endif
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1093,6 +2005,11 @@ extern PetscErrorCode PCSetUp_MatExPre(PC pc) {
   PetscCall(MFNSetOptionsPrefix(ctx->phi2, "phi2_"));
   PetscCall(MFNSetFromOptions(ctx->phi2));
   PetscCall(MFNSetUp(ctx->phi2));
+
+  PetscCall(PetscPrintf(
+      PETSC_COMM_WORLD,
+      "MatExPreVer0 is called with steps=%d, delta_t=%.5e, ratio=%.5e.\n",
+      ctx->steps, ctx->delta_t, ctx->delta_t * ctx->steps));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -1171,70 +2088,184 @@ PetscErrorCode PCShell_MatExPre(PC pc, MatExPre *ctx) {
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest) {
+PetscErrorCode PCSetUp_MatExPreVer2(PC pc) {
   // Stack variables.
-  std::vector<DM> da_hierarchy;
+  MatExPreVer2Ctx *ctx = nullptr;
+  Mat A = nullptr;
+  FN fn = nullptr;
 
   PetscFunctionBeginUser;
-  PetscInt nlevels = 2;
-  PetscCall(PCMGGetLevels(pc, &nlevels));
-  PetscCheck(nlevels >= 2, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
-             "The number of levels must be at least 2, but got %d.\n", nlevels);
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-matex_delta_t",
+                                &ctx->delta_t, nullptr));
+  PetscCheck(ctx->delta_t > 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The delta_t must be positive, but got %f.\n", ctx->delta_t);
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-matex_shift", &ctx->shift,
+                                nullptr));
+  PetscCheck(ctx->shift >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The shift must be non-negative, but got %f.\n", ctx->shift);
 
-  // Finest is at 0.
-  da_hierarchy.resize(nlevels);
-  da_hierarchy[0] = da_finest;
-  PetscCall(DMCoarsenHierarchy(da_hierarchy[0], nlevels - 1, &da_hierarchy[1]));
+  // Create the shifted matrix.
+  PetscCall(PCGetOperators(pc, &A, nullptr));
+  PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->P_mat));
+  PetscCall(get_shifted_velocity_mat(
+      ctx->P_mat, ctx->velocity, ctx->omega * ctx->omega * ctx->shift * IU));
 
-  PetscCall(PCMGSetLevels(pc, nlevels, nullptr));
-  PetscCall(PCMGSetType(pc, PC_MG_MULTIPLICATIVE));
-  PetscCall(PCMGSetNumberSmooth(pc, 1));
-  PetscCall(PCMGSetGalerkin(pc, PC_MG_GALERKIN_BOTH));
+  // Create phi1.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi1));
+  PetscCall(MFNSetOperator(ctx->phi1, ctx->P_mat));
+  PetscCall(MFNGetFN(ctx->phi1, &fn));
+  PetscCall(FNSetType(fn, FNPHI));
+  PetscCall(FNPhiSetIndex(fn, 1));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi1, "phi1_"));
+  PetscCall(MFNSetFromOptions(ctx->phi1));
+  PetscCall(MFNSetUp(ctx->phi1));
 
-  // Reverse the da_hierarchy, now the finest is at the end.
-  std::reverse(da_hierarchy.begin(), da_hierarchy.end());
+  // Create phi0.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi0));
+  PetscCall(MFNSetOperator(ctx->phi0, ctx->P_mat));
+  PetscCall(MFNGetFN(ctx->phi0, &fn));
+  PetscCall(FNSetType(fn, FNEXP));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi0, "phi0_"));
+  PetscCall(MFNSetFromOptions(ctx->phi0));
+  PetscCall(MFNSetUp(ctx->phi0));
 
-  for (auto k = 1; k < nlevels; ++k) {
-    Mat R = nullptr;
-    PetscCall(
-        DMCreateInterpolation(da_hierarchy[k - 1], da_hierarchy[k], &R, NULL));
-    PetscCall(PCMGSetInterpolation(pc, k, R));
-    PetscCall(MatDestroy(&R));
-  }
+  // Create the fixed point mat.
+  PetscInt size_loc_m = 0, size_loc_n = 0;
+  PetscCall(MatGetLocalSize(ctx->P_mat, &size_loc_m, &size_loc_n));
+  PetscCall(MatCreateShell(PETSC_COMM_WORLD, size_loc_m, size_loc_n,
+                           PETSC_DETERMINE, PETSC_DETERMINE, ctx,
+                           &ctx->fixed_point_mat));
+  PetscCall(MatSetUp(ctx->fixed_point_mat));
+  PetscCall(MatShellSetOperation(
+      ctx->fixed_point_mat, MATOP_MULT,
+      reinterpret_cast<void (*)(void)>(mult_MatExPreVer2)));
+  // I think the following line is redundant.
+  // PetscCall(MatShellSetContext(ctx->fixed_point_mat, ctx));
 
-  // Do not destroy the finest level.
-  for (auto k = 0; k < nlevels - 1; ++k) {
-    PetscCall(DMDestroy(&da_hierarchy[k]));
-  }
+  // Prepare the preconditioner for fixed point iterations.
+  // DM dm = nullptr;
+  // PetscCall(VecGetDM(ctx->velocity, &dm));
+  // PetscCall(DMCreateGlobalVector(dm, &ctx->fixed_point_mat_jac));
+  // PetscCall(MatGetDiagonal(ctx->P_mat, ctx->fixed_point_mat_jac));
+  // PetscCall(VecScale(ctx->fixed_point_mat_jac, ctx->delta_t * IU));
+  // PetscCall(VecExp(ctx->fixed_point_mat_jac));
+  // PetscCall(VecScale(ctx->fixed_point_mat_jac, -1.0));
+  // PetscCall(VecShift(ctx->fixed_point_mat_jac, 1.0));
 
-  // Define default solvers for each level.
-  // It seems that CML options will supercede all things below.
-  KSP ksp_each_level = nullptr;
-  PC pc_each_level = nullptr;
-  PetscCall(PCMGGetCoarseSolve(pc, &ksp_each_level));
-  PetscCall(KSPSetType(ksp_each_level, KSPPREONLY));
-  PetscCall(KSPGetPC(ksp_each_level, &pc_each_level));
-  PetscCall(PCSetType(pc_each_level, PCLU));
-  PetscCall(PCFactorSetMatSolverType(pc_each_level, MATSOLVERMKL_CPARDISO));
-  for (auto k = 1; k < nlevels; ++k) {
-    PetscCall(PCMGGetSmoother(pc, k, &ksp_each_level));
-    PetscCall(KSPSetType(ksp_each_level, KSPBCGS));
-    PetscCall(KSPGetPC(ksp_each_level, &pc_each_level));
-    PetscCall(PCSetType(pc_each_level, PCBJACOBI));
-  }
+  // Create the fixed point sys.
+  PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->fixed_point_ksp));
+  PetscCall(KSPSetOperators(ctx->fixed_point_ksp, ctx->fixed_point_mat,
+                            ctx->fixed_point_mat));
+  PetscCall(KSPSetType(ctx->fixed_point_ksp, KSPGMRES));
+  PC fp_pc = nullptr;
+  PetscCall(KSPGetPC(ctx->fixed_point_ksp, &fp_pc));
+  PetscCall(PCSetType(fp_pc, PCNONE));
+  // PetscCall(KSPGetPC(ctx->fixed_point_ksp, &fp_pc));
+  // PetscCall(PCSetType(fp_pc, PCSHELL));
+  // PetscCall(PCShellSetContext(fp_pc, ctx));
+  // PetscCall(PCShellSetApply(fp_pc, jac_apply_MatExPreVer2));
+  PetscCall(KSPSetOptionsPrefix(ctx->fixed_point_ksp, "fp_"));
+  PetscCall(KSPSetFromOptions(ctx->fixed_point_ksp));
+  PetscCall(KSPSetUp(ctx->fixed_point_ksp));
 
-#ifdef DEBUG
+  // #ifdef DEBUG
+  double expect_ratio =
+      std::exp(-ctx->delta_t * ctx->shift * ctx->omega * ctx->omega);
   PetscCall(PetscPrintf(PETSC_COMM_WORLD,
-                        "PCMGSetupViaCoarsen is called with levels=%d.\n",
-                        nlevels));
-#endif
+                        "PCSetUp_MatExPreVer2 is called with delta_t=%.5e, "
+                        "shift=%.5e, x=%.5e.\n",
+                        ctx->delta_t, ctx->shift, expect_ratio));
+  // #endif
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-PetscErrorCode PCSetUp_MatExPreVer2(PC pc) {
+// PetscErrorCode jac_apply_MatExPreVer2(PC pc, Vec in, Vec out) {
+//   // Stack variables.
+//   MatExPreVer2Ctx *ctx = nullptr;
+//   PetscFunctionBeginUser;
+
+//   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+//   PetscCall(VecPointwiseDivide(out, in, ctx->fixed_point_mat_jac));
+
+//   PetscFunctionReturn(PETSC_SUCCESS);
+// }
+
+PetscErrorCode PCApply_MatExPreVer2(PC pc, Vec in, Vec out) {
   // Stack variables.
   MatExPreVer2Ctx *ctx = nullptr;
+  Vec phi_out = nullptr;
+  DM dm = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(VecGetDM(ctx->velocity, &dm));
+  PetscCall(DMGetGlobalVector(dm, &phi_out));
+
+  // phi_out = phi1(in).
+  PetscCall(MFNSolve(ctx->phi1, in, phi_out));
+  // Fixed point iteration.
+  PetscCall(KSPSolve(ctx->fixed_point_ksp, phi_out, out));
+  // Scale.
+  PetscCall(VecScale(out, -IU));
+
+  // Clean up.
+  PetscCall(DMRestoreGlobalVector(dm, &phi_out));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCDestroy_MatExPreVer2(PC pc) {
+  // Stack variables.
+  MatExPreVer2Ctx *ctx = nullptr;
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  // PetscCall(VecDestroy(&ctx->fixed_point_mat_jac));
+  PetscCall(KSPDestroy(&ctx->fixed_point_ksp));
+  PetscCall(MatDestroy(&ctx->fixed_point_mat));
+  PetscCall(MFNDestroy(&ctx->phi0));
+  PetscCall(MFNDestroy(&ctx->phi1));
+  PetscCall(MatDestroy(&ctx->P_mat));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode mult_MatExPreVer2(Mat A, Vec in, Vec out) {
+  // Stack variables.
+  MatExPreVer2Ctx *ctx = nullptr;
+  DM dm = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(MatShellGetContext(A, reinterpret_cast<void **>(&ctx)));
+  PetscCall(VecGetDM(ctx->velocity, &dm));
+
+  // out = phi0(in).
+  PetscCall(MFNSolve(ctx->phi0, in, out));
+  // out = in - out.
+  PetscCall(VecAYPX(out, -1.0, in));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCShell_MatExPreVer2(PC pc, MatExPreVer2Ctx *ctx) {
+  PetscFunctionBeginUser;
+
+  PetscCall(PCSetType(pc, PCSHELL));
+  PetscCall(PCShellSetContext(pc, ctx));
+  PetscCall(PCShellSetApply(pc, PCApply_MatExPreVer2));
+  PetscCall(PCShellSetSetUp(pc, PCSetUp_MatExPreVer2));
+  PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPreVer2));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCSetUp_MatExPreVer3(PC pc) {
+  // Stack variables.
+  MatExPreVer3Ctx *ctx = nullptr;
   Mat A = nullptr;
   FN fn = nullptr;
 
@@ -1260,16 +2291,6 @@ PetscErrorCode PCSetUp_MatExPreVer2(PC pc) {
   PetscCall(get_shifted_velocity_mat(
       ctx->P_mat, ctx->velocity, ctx->omega * ctx->omega * ctx->shift * IU));
 
-  // Create phi0.
-  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi0));
-  PetscCall(MFNSetOperator(ctx->phi0, ctx->P_mat));
-  PetscCall(MFNGetFN(ctx->phi0, &fn));
-  PetscCall(FNSetType(fn, FNEXP));
-  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
-  PetscCall(MFNSetOptionsPrefix(ctx->phi0, "phi0_"));
-  PetscCall(MFNSetFromOptions(ctx->phi0));
-  PetscCall(MFNSetUp(ctx->phi0));
-
   // Create phi1.
   PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi1));
   PetscCall(MFNSetOperator(ctx->phi1, ctx->P_mat));
@@ -1281,27 +2302,39 @@ PetscErrorCode PCSetUp_MatExPreVer2(PC pc) {
   PetscCall(MFNSetFromOptions(ctx->phi1));
   PetscCall(MFNSetUp(ctx->phi1));
 
-#ifdef DEBUG
-  double expect_ratio = std::exp(-ctx->delta_t * ctx->shift * ctx->omega *
-                                 ctx->omega * (ctx->steps + 1));
+  // Create phi0.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi0));
+  PetscCall(MFNSetOperator(ctx->phi0, ctx->P_mat));
+  PetscCall(MFNGetFN(ctx->phi0, &fn));
+  PetscCall(FNSetType(fn, FNEXP));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi0, "phi0_"));
+  PetscCall(MFNSetFromOptions(ctx->phi0));
+  PetscCall(MFNSetUp(ctx->phi0));
+
+  // #ifdef DEBUG
+  double expect_ratio = std::exp(-ctx->shift * ctx->omega * ctx->omega *
+                                 ctx->delta_t * (ctx->steps + 1));
   PetscCall(PetscPrintf(PETSC_COMM_WORLD,
-                        "PCSetUp_MatExPreVer2 is called with delta_t=%.5e, "
-                        "steps=%d, shift=%.5e, x=%.5e.\n",
-                        ctx->delta_t, ctx->steps, ctx->shift, expect_ratio));
-#endif
+                        "PCSetUp_MatExPreVer3 is called with delta_t=%.5e, "
+                        "shift=%.5e, steps=%d, x=%.5e.\n",
+                        ctx->delta_t, ctx->shift, ctx->steps, expect_ratio));
+  // #endif
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-PetscErrorCode PCApply_MatExPreVer2(PC pc, Vec in, Vec out) {
+extern PetscErrorCode PCApply_MatExPreVer3(PC pc, Vec in, Vec out) {
   // Stack variables.
-  MatExPreVer2Ctx *ctx = nullptr;
-  Vec E_in = nullptr, phi_out = nullptr;
+  MatExPreVer3Ctx *ctx = nullptr;
+  Vec phi_out = nullptr, E_in = nullptr;
+  DM dm = nullptr;
 
   PetscFunctionBeginUser;
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
-  PetscCall(VecDuplicate(in, &E_in));
-  PetscCall(VecDuplicate(in, &phi_out));
+  PetscCall(VecGetDM(ctx->velocity, &dm));
+  PetscCall(DMGetGlobalVector(dm, &phi_out));
+  PetscCall(DMGetGlobalVector(dm, &E_in));
 
   // phi_out = phi1(in).
   PetscCall(MFNSolve(ctx->phi1, in, phi_out));
@@ -1322,33 +2355,328 @@ PetscErrorCode PCApply_MatExPreVer2(PC pc, Vec in, Vec out) {
   PetscCall(VecScale(out, -IU));
 
   // Clean up.
-  PetscCall(VecDestroy(&phi_out));
-  PetscCall(VecDestroy(&E_in));
+  PetscCall(DMRestoreGlobalVector(dm, &E_in));
+  PetscCall(DMRestoreGlobalVector(dm, &phi_out));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-PetscErrorCode PCDestroy_MatExPreVer2(PC pc) {
+PetscErrorCode PCDestroy_MatExPreVer3(PC pc) {
   // Stack variables.
-  MatExPreVer2Ctx *ctx = nullptr;
+  MatExPreVer3Ctx *ctx = nullptr;
   PetscFunctionBeginUser;
 
   PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(MFNDestroy(&ctx->phi0));
+  PetscCall(MFNDestroy(&ctx->phi1));
   PetscCall(MatDestroy(&ctx->P_mat));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCShell_MatExPreVer3(PC pc, MatExPreVer3Ctx *ctx) {
+  PetscFunctionBeginUser;
+
+  PetscCall(PCSetType(pc, PCSHELL));
+  PetscCall(PCShellSetContext(pc, ctx));
+  PetscCall(PCShellSetApply(pc, PCApply_MatExPreVer3));
+  PetscCall(PCShellSetSetUp(pc, PCSetUp_MatExPreVer3));
+  PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPreVer3));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCSetUp_MatExPreVer4(PC pc) {
+  MatExPreVer4Ctx *ctx = nullptr;
+  Mat A = nullptr;
+  FN fn = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+
+  // Create the shifted matrix.
+  PetscCall(PCGetOperators(pc, &A, nullptr));
+
+  // Create phi1.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi1));
+  PetscCall(MFNSetOperator(ctx->phi1, A));
+  PetscCall(MFNGetFN(ctx->phi1, &fn));
+  PetscCall(FNSetType(fn, FNPHI));
+  PetscCall(FNPhiSetIndex(fn, 1));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi1, "phi1_"));
+  PetscCall(MFNSetFromOptions(ctx->phi1));
+  PetscCall(MFNSetUp(ctx->phi1));
+
+  // Create phi0.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi0));
+  PetscCall(MFNSetOperator(ctx->phi0, A));
+  PetscCall(MFNGetFN(ctx->phi0, &fn));
+  PetscCall(FNSetType(fn, FNEXP));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi0, "phi0_"));
+  PetscCall(MFNSetFromOptions(ctx->phi0));
+  PetscCall(MFNSetUp(ctx->phi0));
+
+  // Create vecs.
+  PetscCall(MatCreateVecs(A, &ctx->E_in, nullptr));
+  PetscCall(MatCreateVecs(A, &ctx->phi_out, nullptr));
+
+#ifdef DEBUG
+  PetscCall(PetscPrintf(PETSC_COMM_WORLD,
+                        "PCSetUp_MatExPreVer4 is called with delta_t=%.5e, "
+                        "steps=%d.\n",
+                        ctx->delta_t, ctx->steps));
+#endif
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCApply_MatExPreVer4(PC pc, Vec in, Vec out) {
+  MatExPreVer4Ctx *ctx = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+
+  // phi_out = phi1(in).
+  PetscCall(MFNSolve(ctx->phi1, in, ctx->phi_out));
+
+  // Initialize out.
+  // out <- phi_out.
+  PetscCall(VecCopy(ctx->phi_out, out));
+  // The main loop.
+  for (auto k = 0; k < ctx->steps; ++k) {
+    // E_in <- phi_out.
+    PetscCall(VecCopy(ctx->phi_out, ctx->E_in));
+    // phi_out = phi0(E_in).
+    PetscCall(MFNSolve(ctx->phi0, ctx->E_in, ctx->phi_out));
+    // out = out + phi_out.
+    PetscCall(VecAXPY(out, 1.0, ctx->phi_out));
+  }
+
+  PetscCall(VecScale(out, -IU));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCDestroy_MatExPreVer4(PC pc) {
+  MatExPreVer4Ctx *ctx = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(MFNDestroy(&ctx->phi0));
+  PetscCall(MFNDestroy(&ctx->phi1));
+  PetscCall(VecDestroy(&ctx->E_in));
+  PetscCall(VecDestroy(&ctx->phi_out));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCShell_MatExPreVer4(PC pc, MatExPreVer4Ctx *ctx) {
+  PetscFunctionBeginUser;
+
+  PetscCall(PCSetType(pc, PCSHELL));
+  PetscCall(PCShellSetContext(pc, ctx));
+  PetscCall(PCShellSetApply(pc, PCApply_MatExPreVer4));
+  PetscCall(PCShellSetSetUp(pc, PCSetUp_MatExPreVer4));
+  PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPreVer4));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCSetUp_MatExPreMg(PC pc) {
+  MatExPreMg *ctx = nullptr;
+  Mat A = nullptr;
+
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-matex_shift", &ctx->shift,
+                                nullptr));
+  PetscCheck(ctx->shift >= 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The shift must be non-negative, but got %f.\n", ctx->shift);
+  PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-matex_delta_t",
+                                &ctx->delta_t, nullptr));
+  PetscCheck(ctx->delta_t > 0.0, PETSC_COMM_WORLD, PETSC_ERR_ARG_OUTOFRANGE,
+             "The delta_t must be positive, but got %f.\n", ctx->delta_t);
+
+  // Create the shifted matrix.
+  PetscCall(PCGetOperators(pc, &A, nullptr));
+  PetscCall(MatDuplicate(A, MAT_COPY_VALUES, &ctx->P_mat));
+  PetscCall(get_shifted_velocity_mat(
+      ctx->P_mat, ctx->velocity, ctx->omega * ctx->omega * ctx->shift * IU));
+
+  // Create main KSP.
+  PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->P_ksp));
+  PetscCall(KSPSetOperators(ctx->P_ksp, ctx->P_mat, ctx->P_mat));
+  PetscCall(KSPSetOptionsPrefix(ctx->P_ksp, "main_"));
+  PetscCall(KSPSetFromOptions(ctx->P_ksp));
+  PetscCall(KSPSetType(ctx->P_ksp, KSPPREONLY));
+
+  // Set main PC of main KSP.
+  PC P_pc = nullptr;
+  PetscCall(KSPGetPC(ctx->P_ksp, &P_pc));
+  PetscCall(PCSetType(P_pc, PCMG));
+  PetscBool use_pcmg = PETSC_FALSE;
+  PetscCall(PetscObjectTypeCompare(reinterpret_cast<PetscObject>(P_pc), PCMG,
+                                   &use_pcmg));
+  if (use_pcmg) {
+    DM dm_finest = nullptr;
+    PetscCall(VecGetDM(ctx->velocity, &dm_finest));
+    PetscCall(PCMGSetupViaCoarsen(P_pc, dm_finest));
+    // Set the coarsest PC as MatExPre.
+    KSP ksp_coarsest = nullptr;
+    PC pc_coarsest = nullptr;
+    PetscCall(PCMGGetCoarseSolve(P_pc, &ksp_coarsest));
+    PetscCall(KSPSetType(ksp_coarsest, KSPPREONLY));
+    PetscCall(KSPGetPC(ksp_coarsest, &pc_coarsest));
+    PetscCall(PCSetType(pc_coarsest, PCSHELL));
+    PetscCall(PCShellSetContext(pc_coarsest, ctx));
+    PetscCall(PCShellSetSetUp(pc_coarsest, PCSetUp_MatExPreMgCoarsest));
+    PetscCall(PCShellSetApply(pc_coarsest, PCApply_MatExPreMgCoarsest));
+    PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPreMgCoarsest));
+  }
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCApply_MatExPreMg(PC pc, Vec in, Vec out) {
+  MatExPreMg *ctx = nullptr;
+
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(KSPSolve(ctx->P_ksp, in, out));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCDestroy_MatExPreMg(PC pc) {
+  MatExPreMg *ctx = nullptr;
+
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(KSPDestroy(&ctx->P_ksp));
+  PetscCall(MatDestroy(&ctx->P_mat));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCShell_MatExPreMg(PC pc, MatExPreMg *ctx) {
+  PetscFunctionBeginUser;
+
+  PetscCall(PCSetType(pc, PCSHELL));
+  PetscCall(PCShellSetContext(pc, ctx));
+  PetscCall(PCShellSetSetUp(pc, PCSetUp_MatExPreMg));
+  PetscCall(PCShellSetApply(pc, PCApply_MatExPreMg));
+  PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPreMg));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCSetUp_MatExPreMgCoarsest(PC pc) {
+  MatExPreMg *ctx = nullptr;
+  Mat A_coarsest = nullptr;
+  FN fn = nullptr;
+
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+  PetscCall(PCGetOperators(pc, &A_coarsest, nullptr));
+
+  // Create phi0.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi0));
+  PetscCall(MFNSetOperator(ctx->phi0, A_coarsest));
+  PetscCall(MFNGetFN(ctx->phi0, &fn));
+  PetscCall(FNSetType(fn, FNEXP));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi0, "phi0_"));
+  PetscCall(MFNSetFromOptions(ctx->phi0));
+  PetscCall(MFNSetUp(ctx->phi0));
+
+  // Create phi1.
+  PetscCall(MFNCreate(PETSC_COMM_WORLD, &ctx->phi1));
+  PetscCall(MFNSetOperator(ctx->phi1, A_coarsest));
+  PetscCall(MFNGetFN(ctx->phi1, &fn));
+  PetscCall(FNSetType(fn, FNPHI));
+  PetscCall(FNPhiSetIndex(fn, 1));
+  PetscCall(FNSetScale(fn, ctx->delta_t * IU, 1.0));
+  PetscCall(MFNSetOptionsPrefix(ctx->phi1, "phi1_"));
+  PetscCall(MFNSetFromOptions(ctx->phi1));
+  PetscCall(MFNSetUp(ctx->phi1));
+
+  // Create the fixed point mat.
+  PetscInt size_loc_m = 0, size_loc_n = 0;
+  PetscCall(MatGetLocalSize(A_coarsest, &size_loc_m, &size_loc_n));
+  PetscCall(MatCreateShell(PETSC_COMM_WORLD, size_loc_m, size_loc_n,
+                           PETSC_DETERMINE, PETSC_DETERMINE, ctx,
+                           &ctx->fixed_point_mat));
+  PetscCall(MatSetUp(ctx->fixed_point_mat));
+  PetscCall(MatShellSetOperation(
+      ctx->fixed_point_mat, MATOP_MULT,
+      reinterpret_cast<void (*)(void)>(mult_MatExPreMgCoarsest)));
+
+  // Create the fixed point sys.
+  PetscCall(KSPCreate(PETSC_COMM_WORLD, &ctx->fixed_point_ksp));
+  PetscCall(KSPSetOperators(ctx->fixed_point_ksp, ctx->fixed_point_mat,
+                            ctx->fixed_point_mat));
+  PetscCall(KSPSetOptionsPrefix(ctx->fixed_point_ksp, "fp_"));
+  PetscCall(KSPSetFromOptions(ctx->fixed_point_ksp));
+  PetscCall(KSPSetType(ctx->fixed_point_ksp, KSPGMRES));
+  PC fp_pc = nullptr;
+  PetscCall(KSPGetPC(ctx->fixed_point_ksp, &fp_pc));
+  PetscCall(PCSetType(fp_pc, PCNONE));
+  PetscCall(KSPSetUp(ctx->fixed_point_ksp));
+
+  // Create tmp vec.
+  PetscCall(MatCreateVecs(A_coarsest, &ctx->fixed_point_vec, nullptr));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCApply_MatExPreMgCoarsest(PC pc, Vec in, Vec out) {
+  MatExPreMg *ctx = nullptr;
+  DM dm = nullptr;
+
+  PetscFunctionBeginUser;
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+
+  // phi_out = phi1(in).
+  PetscCall(MFNSolve(ctx->phi1, in, ctx->fixed_point_vec));
+  // Fixed point iteration.
+  PetscCall(KSPSolve(ctx->fixed_point_ksp, ctx->fixed_point_vec, out));
+  PetscCall(VecScale(out, -IU));
+
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode PCDestroy_MatExPreMgCoarsest(PC pc) {
+  MatExPreMg *ctx = nullptr;
+
+  PetscFunctionBeginUser;
+
+  PetscCall(PCShellGetContext(pc, reinterpret_cast<void **>(&ctx)));
+
+  PetscCall(KSPDestroy(&ctx->fixed_point_ksp));
+  PetscCall(MatDestroy(&ctx->fixed_point_mat));
+  PetscCall(VecDestroy(&ctx->fixed_point_vec));
   PetscCall(MFNDestroy(&ctx->phi0));
   PetscCall(MFNDestroy(&ctx->phi1));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
-PetscErrorCode PCShell_MatExPreVer2(PC pc, MatExPreVer2Ctx *ctx) {
-  PetscFunctionBeginUser;
+PetscErrorCode mult_MatExPreMgCoarsest(Mat A, Vec in, Vec out) {
+  MatExPreMg *ctx = nullptr;
 
-  PetscCall(PCSetType(pc, PCSHELL));
-  PetscCall(PCShellSetContext(pc, ctx));
-  PetscCall(PCShellSetApply(pc, PCApply_MatExPreVer2));
-  PetscCall(PCShellSetSetUp(pc, PCSetUp_MatExPreVer2));
-  PetscCall(PCShellSetDestroy(pc, PCDestroy_MatExPreVer2));
+  PetscFunctionBeginUser;
+  PetscCall(MatShellGetContext(A, reinterpret_cast<void **>(&ctx)));
+
+  // out = phi0(in).
+  PetscCall(MFNSolve(ctx->phi0, in, out));
+  // out = in - out.
+  PetscCall(VecAYPX(out, -1.0, in));
 
   PetscFunctionReturn(PETSC_SUCCESS);
 }

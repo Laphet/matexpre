@@ -8,14 +8,16 @@
 #include "solver.h"
 #include <string>
 
-const int MARMOUSI_NX = 13601;
-const int MARMOUSI_NY = 2801;
-const double MARMOUSI_LX = 17.0;
-const double MARMOUSI_LY = 3.5;
-const double MARMOUSI_VMIN = 1.0;
-char HDF5_FILENAME[] = "data_marmousi.hdf5";
-char HDF5_GROUPNAME[] = "marmousi-ii";
-char P_VELOCITY_NAME[] = "P-velocity";
+const int NX = 676;
+const int NY = 676;
+const int NZ = 210;
+const double LX = 13.5;       // km
+const double LY = 13.5;       // km
+const double LZ = 0.02 * 209; // km
+constexpr double VMIN = 1.5;  // km/s
+char HDF5_FILENAME[] = "data_overthrust.hdf5";
+char HDF5_GROUPNAME[] = "overthrust";
+char VELOCITY_NAME[] = "velocity";
 
 int main(int argc, char **argv) {
   PetscCall(SlepcInitialize(&argc, &argv, nullptr, nullptr));
@@ -32,11 +34,10 @@ int main(int argc, char **argv) {
                                  nullptr));
 
     // Copy the velocity into the solver dm.
-    int marmousi_interior_elems[2] = {MARMOUSI_NX - 1, MARMOUSI_NY - 1};
+    int interior_elems[3] = {NX - 1, NY - 1, NZ - 1};
     // double marmousi_interior_domain_lens[2] = {MARMOUSI_LX, MARMOUSI_LY};
-    double marmousi_interior_domain_lens[2] = {1.0, MARMOUSI_LY / MARMOUSI_LX};
-    Solver<2> solver(pml_width, marmousi_interior_elems,
-                     marmousi_interior_domain_lens);
+    double interior_domain_lens[3] = {1.0, LY / LX, LZ / LX};
+    Solver<3> solver(pml_width, interior_elems, interior_domain_lens);
 
     // Create the velocity vector.
     DM dm = nullptr;
@@ -45,11 +46,11 @@ int main(int argc, char **argv) {
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(velocity),
                                  "velocity"));
     PetscCall(solver.read_hdf5_vec(velocity, HDF5_FILENAME, HDF5_GROUPNAME,
-                                   P_VELOCITY_NAME));
+                                   VELOCITY_NAME, 1.0 / VMIN));
 
-    // Source is at 10m-depth, hence delta source location should be j=8.
+    // Source is at the center.
     PetscCall(DMCreateGlobalVector(dm, &source));
-    PetscCall(solver.get_delta_rhs(source, MARMOUSI_NX / 2, 8, 0));
+    PetscCall(solver.get_delta_rhs(source));
     PetscCall(
         PetscObjectSetName(reinterpret_cast<PetscObject>(source), "source"));
 
@@ -163,8 +164,9 @@ int main(int argc, char **argv) {
       std::string surfix(HDF5_GROUPNAME);
       surfix += std::string("-f") + std::to_string(freq) + "w" +
                 std::to_string(pml_width);
-      PetscCall(solver.save_xdmf_hdf5(velocity, surfix.c_str(), HDF5_FILENAME,
-                                      surfix.c_str()));
+      // PetscCall(solver.save_xdmf_hdf5(velocity, surfix.c_str(),
+      // HDF5_FILENAME,
+      //                                 surfix.c_str()));
       PetscCall(solver.save_xdmf_hdf5(u, surfix.c_str(), HDF5_FILENAME,
                                       surfix.c_str()));
     }

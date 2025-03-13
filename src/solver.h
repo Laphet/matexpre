@@ -67,11 +67,15 @@ public:
   // The dataset is in the location hdf5_groupname/vec_int_name.
   PetscErrorCode read_hdf5_vec(Vec v, const char *hdf5_filename,
                                const char *hdf5_groupname,
-                               const char *vec_int_name);
+                               const char *vec_int_name,
+                               const PetscReal scale = 1.0);
 
   PetscErrorCode get_laplace_pml_mat(Mat A, const double omega);
 
   PetscErrorCode get_laplace_abc_mat(Mat A, const double omega);
+
+  // At y=0, we set the zero Neumann boundary condition.
+  PetscErrorCode get_laplace_abc_bzn_mat(Mat A, const double omega);
 
   // PetscErrorCode get_laplace_cap_mat(Mat A, const double omega);
 
@@ -122,21 +126,6 @@ struct GaussianCtx {
 std::complex<double> func_gaussian(const double x, const double y,
                                    const double z, void *ctx);
 
-// Complex shift preconditioner.
-// Shift is a complex number.
-struct ComplexShiftPre {
-  // P = - (shift) omega^2/v^2 - Delta.
-  double shift;
-  double omega;
-  Vec velocity;
-  Mat P_mat;
-  KSP P_ksp;
-};
-extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc);
-extern PetscErrorCode PCApply_ComplexShiftPre(PC pc, Vec in, Vec out);
-extern PetscErrorCode PCDestroy_ComplexShiftPre(PC pc);
-PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx);
-
 // Matrix exponential preconditioner.
 // -i/T \int_0^T \int_0^t e^{i A s} ds dt ~ A^{-1}.
 struct MatExPre {
@@ -152,10 +141,27 @@ extern PetscErrorCode PCApply_MatExPre(PC pc, Vec in, Vec out);
 extern PetscErrorCode PCDestroy_MatExPre(PC pc);
 PetscErrorCode PCShell_MatExPre(PC pc, MatExPre *ctx);
 
-// Borrowed from https://petsc.org/main/src/ksp/ksp/tutorials/ex42.c.html.
-PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest);
-
 struct MatExPreVer2Ctx {
+  double shift;
+  double omega;
+  Vec velocity;
+  Mat P_mat;
+  double delta_t;
+  MFN phi0;
+  MFN phi1;
+  Mat fixed_point_mat;
+  KSP fixed_point_ksp;
+  // Vec fixed_point_mat_jac;
+};
+
+extern PetscErrorCode PCSetUp_MatExPreVer2(PC pc);
+extern PetscErrorCode PCApply_MatExPreVer2(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_MatExPreVer2(PC pc);
+extern PetscErrorCode mult_MatExPreVer2(Mat A, Vec in, Vec out);
+// extern PetscErrorCode jac_apply_MatExPreVer2(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCShell_MatExPreVer2(PC pc, MatExPreVer2Ctx *ctx);
+
+struct MatExPreVer3Ctx {
   double delta_t;
   PetscInt steps;
   double shift;
@@ -166,7 +172,62 @@ struct MatExPreVer2Ctx {
   MFN phi1;
 };
 
-extern PetscErrorCode PCSetUp_MatExPreVer2(PC pc);
-extern PetscErrorCode PCApply_MatExPreVer2(PC pc, Vec in, Vec out);
-extern PetscErrorCode PCDestroy_MatExPreVer2(PC pc);
-extern PetscErrorCode PCShell_MatExPreVer2(PC pc, MatExPreVer2Ctx *ctx);
+extern PetscErrorCode PCSetUp_MatExPreVer3(PC pc);
+extern PetscErrorCode PCApply_MatExPreVer3(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_MatExPreVer3(PC pc);
+extern PetscErrorCode PCShell_MatExPreVer3(PC pc, MatExPreVer3Ctx *ctx);
+
+struct MatExPreVer4Ctx {
+  double delta_t;
+  PetscInt steps;
+  MFN phi0;
+  MFN phi1;
+  Vec E_in;
+  Vec phi_out;
+};
+
+extern PetscErrorCode PCSetUp_MatExPreVer4(PC pc);
+extern PetscErrorCode PCApply_MatExPreVer4(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_MatExPreVer4(PC pc);
+extern PetscErrorCode PCShell_MatExPreVer4(PC pc, MatExPreVer4Ctx *ctx);
+
+// Complex shift preconditioner.
+// Shift is a complex number.
+struct ComplexShiftPre {
+  // P = - (shift) omega^2/v^2 - Delta.
+  double shift;
+  double omega;
+  Vec velocity;
+  Mat P_mat;
+  KSP P_ksp;
+  MatExPreVer4Ctx matex_ctx;
+};
+extern PetscErrorCode PCSetUp_ComplexShiftPre(PC pc);
+extern PetscErrorCode PCApply_ComplexShiftPre(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_ComplexShiftPre(PC pc);
+PetscErrorCode PCShell_ComplexShiftPre(PC pc, ComplexShiftPre *ctx);
+
+// Borrowed from https://petsc.org/main/src/ksp/ksp/tutorials/ex42.c.html.
+PetscErrorCode PCMGSetupViaCoarsen(PC pc, DM da_finest);
+
+struct MatExPreMg {
+  double shift;
+  double omega;
+  Vec velocity;
+  Mat P_mat;
+  KSP P_ksp;
+  double delta_t;
+  MFN phi0;
+  MFN phi1;
+  Mat fixed_point_mat;
+  KSP fixed_point_ksp;
+  Vec fixed_point_vec;
+};
+extern PetscErrorCode PCSetUp_MatExPreMg(PC pc);
+extern PetscErrorCode PCApply_MatExPreMg(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_MatExPreMg(PC pc);
+extern PetscErrorCode PCShell_MatExPreMg(PC pc, MatExPreMg *ctx);
+extern PetscErrorCode PCSetUp_MatExPreMgCoarsest(PC pc);
+extern PetscErrorCode PCApply_MatExPreMgCoarsest(PC pc, Vec in, Vec out);
+extern PetscErrorCode PCDestroy_MatExPreMgCoarsest(PC pc);
+extern PetscErrorCode mult_MatExPreMgCoarsest(Mat A, Vec in, Vec out);
