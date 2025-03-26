@@ -1,6 +1,8 @@
 build/*
 .cache/*
 tmp/*
+tmp-win
+tmp-win/*
 .vscode/*
 bin/*
 data/*

@@ -8,16 +8,16 @@
 #include "solver.h"
 #include <string>
 
-const int NX = 676;
-const int NY = 676;
-const int NZ = 210;
+const int NX = 338;
+const int NY = 338;
+const int NZ = 105;
 const double LX = 13.5;       // km
 const double LY = 13.5;       // km
-const double LZ = 0.02 * 209; // km
+const double LZ = 0.04 * 104; // km
 const double VMIN = 1500.0;   // m/s
-const double MAX_FREQ = 67.5;
-char HDF5_FILENAME[] = "data_salt_dome.hdf5";
-char HDF5_GROUPNAME[] = "salt_dome";
+const double MAX_FREQ = 34.0;
+char HDF5_FILENAME[] = "data_salt_dome_c2.hdf5";
+char HDF5_GROUPNAME[] = "salt_dome_c2";
 char VELOCITY_NAME[] = "velocity";
 
 int main(int argc, char **argv) {

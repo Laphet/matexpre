@@ -11,10 +11,12 @@
 const int NX = 801;
 const int NY = 801;
 const int NZ = 187;
-const double LX = 20.0;            // km
-const double LY = 20.0;            // km
-const double LZ = 4.65;            // km
-constexpr double VMIN = 2.1788345; // km/s
+const double LX = 20.0;        // km
+const double LY = 20.0;        // km
+const double LZ = 4.65;        // km
+const double VMIN = 2178.8345; // m/s
+const double VMAX = 6.0;
+const double MAX_FREQ = 80.0;
 char HDF5_FILENAME[] = "data_overthrust.hdf5";
 char HDF5_GROUPNAME[] = "overthrust";
 char VELOCITY_NAME[] = "velocity";
@@ -27,17 +29,19 @@ int main(int argc, char **argv) {
     Mat A = nullptr;
     KSP ksp = nullptr;
 
-    // Three configurations.
-    int freq = 20, pml_width = 0;
-    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-freq", &freq, nullptr));
+    int pml_width = 10;
     PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pml_width", &pml_width,
                                  nullptr));
+    PetscReal freq = MAX_FREQ;
+    PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-freq", &freq, nullptr));
 
     // Copy the velocity into the solver dm.
     int interior_elems[3] = {NX - 1, NY - 1, NZ - 1};
     // double marmousi_interior_domain_lens[2] = {MARMOUSI_LX, MARMOUSI_LY};
     double interior_domain_lens[3] = {1.0, LY / LX, LZ / LX};
     Solver<3> solver(pml_width, interior_elems, interior_domain_lens);
+
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Reading the velocity model>>>\n"));
 
     // Create the velocity vector.
     DM dm = nullptr;
@@ -47,7 +51,11 @@ int main(int argc, char **argv) {
                                  "velocity"));
     PetscCall(solver.read_hdf5_vec(velocity, HDF5_FILENAME, HDF5_GROUPNAME,
                                    VELOCITY_NAME, 1.0 / VMIN));
+    // PetscCall(solver.get_vec_from_func(velocity, func_one, nullptr));
 
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Reading the velocity model<<<\n"));
+
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Preparing the system>>>\n"));
     // Source is at the center.
     PetscCall(DMCreateGlobalVector(dm, &source));
     PetscCall(solver.get_delta_rhs(source));
@@ -65,10 +73,11 @@ int main(int argc, char **argv) {
     if (use_pml) {
       PetscCall(solver.get_laplace_pml_mat(A, omega));
     } else {
-      PetscCall(solver.get_laplace_abc_bzn_mat(A, omega));
+      PetscCall(solver.get_laplace_abc_sim_mat(A, omega));
     }
     PetscCall(get_shifted_velocity_mat(A, velocity, -omega * omega));
     PetscCall(MatScale(A, -1.0));
+    PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Preparing the system<<<\n"));
 
     // Solve the system.
     PetscCall(KSPCreate(PETSC_COMM_WORLD, &ksp));
@@ -161,14 +170,16 @@ int main(int argc, char **argv) {
     PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-save_file", &save_file,
                                   nullptr));
     if (save_file) {
+      PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Save the files>>>\n"));
       std::string surfix(HDF5_GROUPNAME);
-      surfix += std::string("-f") + std::to_string(freq) + "w" +
-                std::to_string(pml_width);
-      // PetscCall(solver.save_xdmf_hdf5(velocity, surfix.c_str(),
-      // HDF5_FILENAME,
-      //                                 surfix.c_str()));
+      surfix += std::string("_f80w") + std::to_string(pml_width);
+      PetscCall(solver.save_xdmf_hdf5(velocity, surfix.c_str(), HDF5_FILENAME,
+                                      surfix.c_str()));
       PetscCall(solver.save_xdmf_hdf5(u, surfix.c_str(), HDF5_FILENAME,
                                       surfix.c_str()));
+      // PetscCall(solver.save_bin(velocity, surfix.c_str()));
+      // PetscCall(solver.save_bin(u, surfix.c_str()));
+      PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Save the files<<<\n"));
     }
 
     // Clean up.

@@ -77,8 +77,9 @@ public:
   // At y=0, we set the zero Neumann boundary condition.
   PetscErrorCode get_laplace_abc_bzn_mat(Mat A, const double omega);
 
-  // PetscErrorCode get_laplace_cap_mat(Mat A, const double omega);
+  PetscErrorCode get_laplace_abc_sim_mat(Mat A, const double omega);
 
+  // PetscErrorCode get_laplace_cap_mat(Mat A, const double omega);
   PetscErrorCode get_delta_rhs(Vec rhs);
 
   // Will not zero the rhs first.
@@ -96,6 +97,10 @@ public:
   PetscErrorCode save_xdmf_hdf5(Vec v, const char *xdmf_filename_surffix,
                                 const char *hdf5_filename,
                                 const char *hdf5_groupname);
+
+  // Save the Petsc vector in the .bin format.
+  // Big endian.
+  PetscErrorCode save_bin(Vec v, const char *vtk_filename_surffix);
 
   Solver(const int uniform_interior_elems, const int uniform_absorber_elems);
 

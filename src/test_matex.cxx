@@ -173,8 +173,8 @@ int main(int argc, char **argv) {
 
     // Get info and solve.
     PetscCall(solver.print_info(omega));
-    PetscCall(KSPSolve(ksp, source, u));
-    PetscCall(KSPConvergedReasonView(ksp, nullptr));
+    // PetscCall(KSPSolve(ksp, source, u));
+    // PetscCall(KSPConvergedReasonView(ksp, nullptr));
 
     // Save the source and the solution.
     PetscBool save_file = PETSC_FALSE;
@@ -184,10 +184,11 @@ int main(int argc, char **argv) {
       std::string surfix("pole");
       surfix += use_four_pole ? "4" : "2";
       surfix += "_freq" + std::to_string(freq);
-      PetscCall(solver.save_xdmf_hdf5(source, surfix.c_str(), "data.hdf5",
-                                      surfix.c_str()));
-      PetscCall(solver.save_xdmf_hdf5(u, surfix.c_str(), "data.hdf5",
-                                      surfix.c_str()));
+      // PetscCall(solver.save_xdmf_hdf5(source, surfix.c_str(), "data.hdf5",
+      //                                 surfix.c_str()));
+      // PetscCall(solver.save_xdmf_hdf5(u, surfix.c_str(), "data.hdf5",
+      //                                 surfix.c_str()));
+      // PetscCall(solver.save_vtk(source, surfix.c_str()));
     }
 
     {

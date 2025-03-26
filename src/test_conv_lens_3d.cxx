@@ -1,68 +1,62 @@
 #include "petscdm.h"
 #include "petscerror.h"
 #include "petscksp.h"
+#include "petscmat.h"
+#include "petscoptions.h"
 #include "petscsys.h"
 #include "petscsystypes.h"
 #include "petscvec.h"
-#include "slepcsys.h"
+// #include "slepceps.h"
 #include "solver.h"
-#include <string>
 
-const int NX = 676;
-const int NY = 676;
-const int NZ = 210;
-const double LX = 13.5;       // km
-const double LY = 13.5;       // km
-const double LZ = 0.02 * 209; // km
-const double VMIN = 1500.0;   // m/s
-const double MAX_FREQ = 67.5;
-char HDF5_FILENAME[] = "data_salt_dome.hdf5";
-char HDF5_GROUPNAME[] = "salt_dome";
-char VELOCITY_NAME[] = "velocity";
+std::complex<double> conv_lens_velocity(const double x, const double y,
+                                        const double z, void *ctx) {
+  double r = *reinterpret_cast<double *>(ctx);
+  GaussianCtx pole = {{0.5, 0.25, 0.5}, r, 0.5};
+  return 1.0 - func_gaussian(x, y, z, &pole);
+}
 
 int main(int argc, char **argv) {
   PetscCall(SlepcInitialize(&argc, &argv, nullptr, nullptr));
-  // Read the Marmousi model.
   {
     Vec velocity = nullptr, source = nullptr, u = nullptr;
     Mat A = nullptr;
     KSP ksp = nullptr;
+    DM dm = nullptr;
 
-    int pml_width = 10;
+    PetscInt pts_per_wavelen = 10;
+    PetscInt freq = 20;
+    PetscInt pml_width = 10;
+    double omega = -1.0;
+
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pts_per_wavelen",
+                                 &pts_per_wavelen, nullptr));
+    PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-freq", &freq, nullptr));
     PetscCall(PetscOptionsGetInt(nullptr, nullptr, "-pml_width", &pml_width,
                                  nullptr));
-    PetscReal freq = MAX_FREQ;
-    PetscCall(PetscOptionsGetReal(nullptr, nullptr, "-freq", &freq, nullptr));
 
-    // Copy the velocity into the solver dm.
-    int interior_elems[3] = {NX - 1, NY - 1, NZ - 1};
-    // double marmousi_interior_domain_lens[2] = {MARMOUSI_LX, MARMOUSI_LY};
-    double interior_domain_lens[3] = {1.0, LY / LX, LZ / LX};
-    Solver<3> solver(pml_width, interior_elems, interior_domain_lens);
+    omega = 2.0 * PETSC_PI * freq;
 
-    PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Reading the velocity model>>>\n"));
-
-    // Create the velocity vector.
-    DM dm = nullptr;
+    // Because v_min=0.5, h should be smaller.
+    Solver<3> solver(freq * pts_per_wavelen * 2, pml_width);
+    // Borrow the DM.
     PetscCall(solver.get_dm(&dm));
+    // Create velocity vector.
     PetscCall(DMCreateGlobalVector(dm, &velocity));
+    double r = 1.0 / 32.0;
+    PetscCall(solver.get_vec_from_func(velocity, conv_lens_velocity,
+                                       reinterpret_cast<void *>(&r)));
     PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(velocity),
                                  "velocity"));
-    PetscCall(solver.read_hdf5_vec(velocity, HDF5_FILENAME, HDF5_GROUPNAME,
-                                   VELOCITY_NAME, 1.0 / VMIN));
 
-    PetscCall(PetscPrintf(PETSC_COMM_WORLD, "Reading the velocity model<<<\n"));
-
-    // Source is at the center.
+    // Create source vector.
     PetscCall(DMCreateGlobalVector(dm, &source));
+    // The source is at the center of the domain.
     PetscCall(solver.get_delta_rhs(source));
     PetscCall(
         PetscObjectSetName(reinterpret_cast<PetscObject>(source), "source"));
 
-    // Form the system.
-    double omega = 2.0 * PETSC_PI * freq;
-    PetscCall(DMCreateGlobalVector(dm, &u));
-    PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(u), "solution"));
+    // Create matrix.
     PetscCall(DMCreateMatrix(dm, &A));
     PetscBool use_pml = PETSC_FALSE;
     PetscCall(
@@ -70,14 +64,20 @@ int main(int argc, char **argv) {
     if (use_pml) {
       PetscCall(solver.get_laplace_pml_mat(A, omega));
     } else {
-      PetscCall(solver.get_laplace_abc_sim_mat(A, omega));
+      PetscCall(solver.get_laplace_abc_mat(A, omega));
     }
+    // { PetscCall(MatView(A, PETSC_VIEWER_STDOUT_WORLD)); }
     PetscCall(get_shifted_velocity_mat(A, velocity, -omega * omega));
     PetscCall(MatScale(A, -1.0));
+    // Create solution vector.
+    PetscCall(DMCreateGlobalVector(dm, &u));
+    PetscCall(PetscObjectSetName(reinterpret_cast<PetscObject>(u), "solution"));
 
     // Solve the system.
     PetscCall(KSPCreate(PETSC_COMM_WORLD, &ksp));
     PetscCall(KSPSetOperators(ksp, A, A));
+    // Set the default ksp solver.
+    PetscCall(KSPSetType(ksp, KSPFGMRES));
     PetscCall(KSPSetFromOptions(ksp));
     PetscBool use_csp = PETSC_FALSE, use_matex = PETSC_FALSE,
               use_matex_ver2 = PETSC_FALSE, use_matex_ver3 = PETSC_FALSE,
@@ -152,8 +152,6 @@ int main(int argc, char **argv) {
       PetscCall(KSPGetPC(ksp, &pc));
       PetscCall(PCShell_MatExPreMg(pc, &matexpremg_ctx));
     }
-    // Set the default ksp solver.
-    PetscCall(KSPSetType(ksp, KSPFGMRES));
     PetscCall(KSPSetUp(ksp));
 
     // Get info and solve.
@@ -161,27 +159,53 @@ int main(int argc, char **argv) {
     PetscCall(KSPSolve(ksp, source, u));
     PetscCall(KSPConvergedReasonView(ksp, nullptr));
 
-    // Save vectors.
+    // Save the source and the solution.
     PetscBool save_file = PETSC_FALSE;
     PetscCall(PetscOptionsGetBool(nullptr, nullptr, "-save_file", &save_file,
                                   nullptr));
     if (save_file) {
-      std::string surfix(HDF5_GROUPNAME);
-      surfix += std::string("-f") + std::to_string(freq) + "w" +
-                std::to_string(pml_width);
-      PetscCall(solver.save_xdmf_hdf5(velocity, surfix.c_str(), HDF5_FILENAME,
-                                      surfix.c_str()));
-      PetscCall(solver.save_xdmf_hdf5(u, surfix.c_str(), HDF5_FILENAME,
-                                      surfix.c_str()));
+      std::string surfix("conv_lens_3d");
+      surfix += "_freq" + std::to_string(freq);
+      PetscCall(solver.save_xdmf_hdf5(
+          u, surfix.c_str(), "data_conv_lens_3d.hdf5", surfix.c_str()));
+      PetscCall(solver.save_xdmf_hdf5(
+          velocity, surfix.c_str(), "data_conv_lens_3d.hdf5", surfix.c_str()));
+    }
+
+    {
+      // Set up the eigenvalue problem.
+      // EPS eps = nullptr;
+      // PetscCall(EPSCreate(PETSC_COMM_WORLD, &eps));
+      // PetscCall(EPSSetOperators(eps, A, nullptr));
+      // PetscCall(EPSSetDimensions(eps, 1, PETSC_DEFAULT, PETSC_DEFAULT));
+      // PetscCall(EPSSetWhichEigenpairs(eps, EPS_SMALLEST_IMAGINARY));
+      // PetscCall(EPSSetFromOptions(eps));
+      // PetscCall(EPSSolve(eps));
+      // PetscInt nconv = 0;
+      // PetscCall(EPSGetConverged(eps, &nconv));
+      // PetscPrintf(PETSC_COMM_WORLD, "Number of converged eigenpairs: %d\n",
+      //             nconv);
+      // for (PetscInt i = 0; i < nconv; ++i) {
+      //   PetscScalar kr = 0.0 + 0.0 * IU;
+      //   PetscCall(EPSGetEigenpair(eps, i, &kr, nullptr, nullptr, nullptr));
+      //   auto lambda_r = PetscRealPart(kr);
+      //   auto lambda_i = PetscImaginaryPart(kr);
+      //   PetscPrintf(PETSC_COMM_WORLD, "Eigenvalue %d: %.5e\t+\t%.5ei, ", i,
+      //               lambda_r, lambda_i);
+      //   double scaled_val = 0.0;
+      //   scaled_val = std::abs(lambda_i);
+      //   scaled_val /= omega * omega;
+      //   PetscPrintf(PETSC_COMM_WORLD, "scaled value: %.5e\n", scaled_val);
+      // }
+      // PetscCall(EPSDestroy(&eps));
     }
 
     // Clean up.
     PetscCall(KSPDestroy(&ksp));
-    PetscCall(MatDestroy(&A));
     PetscCall(VecDestroy(&u));
+    PetscCall(MatDestroy(&A));
     PetscCall(VecDestroy(&source));
     PetscCall(VecDestroy(&velocity));
   }
-
   PetscCall(SlepcFinalize());
 }
